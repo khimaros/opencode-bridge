@@ -1,0 +1,202 @@
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import path from 'node:path'
+import type { BridgeConfig, RoomSession, Part } from './types.js'
+import { LOG_PREFIX } from './types.js'
+
+function debug(msg: string) {
+  console.log(`${LOG_PREFIX}: ${msg}`)
+}
+
+// persisted room-to-session mapping
+const roomSessions = new Map<string, RoomSession>()
+// reverse lookup: session ID -> room ID
+const sessionToRoom = new Map<string, string>()
+// per-room promise chain to serialize concurrent messages
+const roomQueues = new Map<string, Promise<void>>()
+
+function roomsPath(workspace: string): string {
+  return path.join(workspace, 'state', 'rooms.json')
+}
+
+// load persisted room mappings from disk
+export function loadRoomMappings(workspace: string) {
+  try {
+    const data = JSON.parse(readFileSync(roomsPath(workspace), 'utf-8'))
+    for (const entry of data) {
+      roomSessions.set(entry.roomId, entry)
+      sessionToRoom.set(entry.sessionId, entry.roomId)
+    }
+    debug(`loaded ${roomSessions.size} room mapping(s)`)
+  } catch {
+    // no saved mappings
+  }
+}
+
+function persistRoomMappings(workspace: string) {
+  try {
+    mkdirSync(path.dirname(roomsPath(workspace)), { recursive: true })
+    const data = Array.from(roomSessions.values())
+    writeFileSync(roomsPath(workspace), JSON.stringify(data, null, 2) + '\n')
+  } catch (e: any) {
+    debug(`persist room mappings failed: ${e.message}`)
+  }
+}
+
+// get or create an opencode session for a matrix room
+export async function getOrCreateSession(
+  client: any, roomId: string, title: string, workspace: string,
+): Promise<string> {
+  const existing = roomSessions.get(roomId)
+  if (existing) {
+    existing.lastActivity = Date.now()
+    persistRoomMappings(workspace)
+    return existing.sessionId
+  }
+
+  const created = await client.session.create({ body: { title } })
+  if (created.error) throw new Error(`create session failed: ${JSON.stringify(created.error)}`)
+  const sessionId = created.data!.id
+
+  const entry: RoomSession = { roomId, sessionId, title, lastActivity: Date.now() }
+  roomSessions.set(roomId, entry)
+  sessionToRoom.set(sessionId, roomId)
+  persistRoomMappings(workspace)
+  debug(`created session ${sessionId} for room ${roomId}`)
+  return sessionId
+}
+
+// look up which room a session is mapped to (for chat.message hook)
+export function getRoomForSession(sessionId: string): string | null {
+  return sessionToRoom.get(sessionId) || null
+}
+
+// clear a stale room mapping (e.g. when the session was deleted externally)
+export function clearRoomMapping(roomId: string, workspace: string) {
+  const entry = roomSessions.get(roomId)
+  if (!entry) return
+  debug(`clearing stale mapping: room ${roomId} -> session ${entry.sessionId}`)
+  sessionToRoom.delete(entry.sessionId)
+  roomSessions.delete(roomId)
+  persistRoomMappings(workspace)
+}
+
+// check if a session is a bridged session
+export function isBridgedSession(sessionId: string): boolean {
+  return sessionToRoom.has(sessionId)
+}
+
+// send a message to an opencode session and return the response parts.
+// uses synchronous prompt() to await the LLM response.
+export async function promptSession(
+  client: any, sessionId: string, text: string,
+  config: BridgeConfig, model?: any,
+): Promise<Part[]> {
+  const body: any = {
+    agent: config.agent,
+    parts: [{ type: 'text', text, synthetic: false }],
+  }
+  if (model) body.model = model
+
+  const result = await client.session.prompt({
+    path: { id: sessionId },
+    body,
+  })
+  if (result.error) throw new Error(`prompt failed: ${JSON.stringify(result.error)}`)
+  return result.data?.parts || []
+}
+
+// check if cleanup should be triggered based on token/message thresholds
+export async function shouldCleanup(
+  client: any, sessionId: string, config: BridgeConfig,
+): Promise<boolean> {
+  if (config.cleanup === 'none') return false
+
+  if (config.cleanup_message_count !== null) {
+    const msgs = await client.session.messages({ path: { id: sessionId } })
+    if (!msgs.error) {
+      const count = (msgs.data || []).length
+      if (count >= config.cleanup_message_count) {
+        debug(`cleanup: message count limit (${count} >= ${config.cleanup_message_count})`)
+        return true
+      }
+    }
+  }
+
+  if (config.cleanup_tokens !== null) {
+    const msgs = await client.session.messages({ path: { id: sessionId } })
+    if (!msgs.error) {
+      let total = 0
+      for (const m of (msgs.data || [])) {
+        const t = m.info?.tokens
+        if (t) total += (t.input || 0) + (t.output || 0)
+      }
+      if (total >= config.cleanup_tokens) {
+        debug(`cleanup: token limit (${total} >= ${config.cleanup_tokens})`)
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+// perform the configured cleanup action on a session.
+// returns the new session ID if rotated, null otherwise.
+export async function performCleanup(
+  client: any, sessionId: string, roomId: string,
+  config: BridgeConfig, workspace: string, model?: any,
+): Promise<{ newSessionId: string | null; action: string }> {
+  if (config.cleanup === 'compact') {
+    if (!model) return { newSessionId: null, action: 'compact skipped (no model)' }
+    const result = await client.session.summarize({
+      path: { id: sessionId },
+      body: { providerID: model.providerID, modelID: model.modelID },
+    })
+    if (result.error) {
+      debug(`cleanup compact failed: ${JSON.stringify(result.error)}`)
+      return { newSessionId: null, action: 'compact failed' }
+    }
+    debug(`cleanup: compacted session ${sessionId}`)
+    return { newSessionId: null, action: 'compacted' }
+  }
+
+  if (config.cleanup !== 'new' && config.cleanup !== 'archive') {
+    return { newSessionId: null, action: 'none' }
+  }
+
+  if (config.cleanup === 'archive') {
+    const update = await client.session.update({
+      path: { id: sessionId },
+      body: { time: { archived: Date.now() } } as any,
+    })
+    if (update.error) {
+      debug(`cleanup archive failed: ${JSON.stringify(update.error)}`)
+      return { newSessionId: null, action: 'archive failed' }
+    }
+  }
+
+  // rotate: create new session
+  const entry = roomSessions.get(roomId)
+  const title = `${entry?.title || roomId} (${new Date().toISOString()})`
+  const created = await client.session.create({ body: { title } })
+  if (created.error) throw new Error(`create session failed: ${JSON.stringify(created.error)}`)
+
+  const newId = created.data!.id
+  // update mappings
+  sessionToRoom.delete(sessionId)
+  const newEntry: RoomSession = { roomId, sessionId: newId, title, lastActivity: Date.now() }
+  roomSessions.set(roomId, newEntry)
+  sessionToRoom.set(newId, roomId)
+  persistRoomMappings(workspace)
+  debug(`cleanup: rotated ${sessionId} -> ${newId} (${config.cleanup})`)
+  return { newSessionId: newId, action: config.cleanup }
+}
+
+// enqueue a task for a room, serializing with any in-flight work.
+// returns the result of the task.
+export function enqueueForRoom<T>(roomId: string, task: () => Promise<T>): Promise<T> {
+  const prev = roomQueues.get(roomId) || Promise.resolve()
+  const next = prev.then(task, task) // run even if previous failed
+  roomQueues.set(roomId, next.then(() => {}, () => {}))
+  return next
+}

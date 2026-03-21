@@ -1,0 +1,36 @@
+{
+  // required: matrix homeserver and bot identity
+  "homeserver": "https://matrix.example.org",
+  "user_id": "@bridge-bot:example.org",
+  "access_token": "syt_...",  // or set MATRIX_ACCESS_TOKEN env var
+
+  // room filtering (empty allowlist = all joined rooms)
+  "room_allowlist": [],
+  "room_blocklist": [],
+
+  // trigger mode: "mention" (respond when @mentioned) or "all" (respond to every message)
+  "default_trigger": "mention",
+  // per-room overrides keyed by room ID
+  "room_triggers": {},
+
+  // display options for matrix output
+  "display_tool_calls": false,
+  "display_reasoning": false,
+  "max_response_length": 4000,
+
+  // opencode agent to use for prompts
+  "agent": "per",
+
+  // matrix sync settings
+  "sync_timeout_ms": 30000,
+
+  // path for matrix sync state persistence (relative to workspace)
+  "storage_path": "state/",
+
+  // context cleanup: "none" | "compact" | "new" | "archive"
+  "cleanup": "none",
+  // trigger cleanup when total tokens exceed this threshold
+  "cleanup_tokens": null,
+  // trigger cleanup when message count exceeds this threshold
+  "cleanup_message_count": null
+}
