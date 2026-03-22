@@ -5,7 +5,8 @@ import {
   MatrixClient, getRoomMembers, getBotDisplayName, getTriggerMode, isRoomAllowed,
 } from './matrix.js'
 import {
-  loadRoomMappings, getOrCreateSession, getRoomForSession,
+  loadBridgeState, getSyncToken, setSyncToken,
+  getOrCreateSession, getRoomForSession,
   isBridgedSession, promptSession, shouldCleanup, performCleanup,
   enqueueForRoom, clearRoomMapping,
 } from './session.js'
@@ -39,13 +40,15 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
   if (baseUrl.port === '0') baseUrl.port = '4096'
   const client = createOpencodeClient({ baseUrl: baseUrl.toString(), directory: WORKSPACE })
 
-  loadRoomMappings(WORKSPACE)
+  loadBridgeState(WORKSPACE)
 
   let lastModel: any = CONFIG.model || null
   if (lastModel) debug(`model: ${lastModel.providerID}/${lastModel.modelID}`)
   else debug('no model configured — will use opencode default')
-  const storagePath = `${WORKSPACE}/${CONFIG.storage_path}`
-  const matrixClient = new MatrixClient(CONFIG.homeserver, CONFIG.access_token, storagePath)
+  const matrixClient = new MatrixClient(
+    CONFIG.homeserver, CONFIG.access_token,
+    () => getSyncToken(), (token) => setSyncToken(token, WORKSPACE),
+  )
   let botDisplayName = ''
   let botUserId = CONFIG.user_id
 

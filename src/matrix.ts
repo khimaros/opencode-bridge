@@ -1,5 +1,3 @@
-import path from 'node:path'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import type { BridgeConfig } from './types.js'
 import { LOG_PREFIX } from './types.js'
 
@@ -22,33 +20,21 @@ export class MatrixClient {
   private baseUrl: string
   private token: string
   private syncToken: string | null = null
-  private storagePath: string
   private running = false
+  private onSyncToken: ((token: string | null) => void) | null = null
 
-  constructor(homeserver: string, accessToken: string, storagePath: string) {
+  constructor(
+    homeserver: string, accessToken: string,
+    getSyncToken: () => string | null, onSyncToken: (token: string | null) => void,
+  ) {
     this.baseUrl = homeserver.replace(/\/+$/, '')
     this.token = accessToken
-    this.storagePath = storagePath
-    mkdirSync(storagePath, { recursive: true })
-    this.loadSyncToken()
-  }
-
-  private loadSyncToken() {
-    try {
-      const data = JSON.parse(readFileSync(path.join(this.storagePath, 'sync.json'), 'utf-8'))
-      this.syncToken = data.next_batch || null
-    } catch {
-      this.syncToken = null
-    }
+    this.syncToken = getSyncToken()
+    this.onSyncToken = onSyncToken
   }
 
   private saveSyncToken() {
-    try {
-      writeFileSync(
-        path.join(this.storagePath, 'sync.json'),
-        JSON.stringify({ next_batch: this.syncToken }) + '\n',
-      )
-    } catch {}
+    this.onSyncToken?.(this.syncToken)
   }
 
   private async api(method: string, endpoint: string, body?: any): Promise<any> {

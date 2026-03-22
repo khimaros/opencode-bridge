@@ -14,32 +14,58 @@ const sessionToRoom = new Map<string, string>()
 // per-room promise chain to serialize concurrent messages
 const roomQueues = new Map<string, Promise<void>>()
 
-function roomsPath(workspace: string): string {
-  return path.join(workspace, 'state', 'rooms.json')
+function statePath(workspace: string): string {
+  return path.join(workspace, 'state', 'bridge.json')
 }
 
-// load persisted room mappings from disk
-export function loadRoomMappings(workspace: string) {
+// all persisted bridge state in one file
+interface BridgeState {
+  rooms: RoomSession[]
+  sync_token: string | null
+}
+
+function loadState(workspace: string): BridgeState {
   try {
-    const data = JSON.parse(readFileSync(roomsPath(workspace), 'utf-8'))
-    for (const entry of data) {
-      roomSessions.set(entry.roomId, entry)
-      sessionToRoom.set(entry.sessionId, entry.roomId)
-    }
-    debug(`loaded ${roomSessions.size} room mapping(s)`)
+    return JSON.parse(readFileSync(statePath(workspace), 'utf-8'))
   } catch {
-    // no saved mappings
+    return { rooms: [], sync_token: null }
   }
 }
 
-function persistRoomMappings(workspace: string) {
+function persistState(workspace: string) {
   try {
-    mkdirSync(path.dirname(roomsPath(workspace)), { recursive: true })
-    const data = Array.from(roomSessions.values())
-    writeFileSync(roomsPath(workspace), JSON.stringify(data, null, 2) + '\n')
+    mkdirSync(path.dirname(statePath(workspace)), { recursive: true })
+    const state: BridgeState = {
+      rooms: Array.from(roomSessions.values()),
+      sync_token: currentSyncToken,
+    }
+    writeFileSync(statePath(workspace), JSON.stringify(state, null, 2) + '\n')
   } catch (e: any) {
-    debug(`persist room mappings failed: ${e.message}`)
+    debug(`persist state failed: ${e.message}`)
   }
+}
+
+let currentSyncToken: string | null = null
+
+// load all persisted state from disk
+export function loadBridgeState(workspace: string) {
+  const state = loadState(workspace)
+  for (const entry of state.rooms) {
+    roomSessions.set(entry.roomId, entry)
+    sessionToRoom.set(entry.sessionId, entry.roomId)
+  }
+  currentSyncToken = state.sync_token
+  debug(`loaded ${roomSessions.size} room mapping(s)`)
+}
+
+// sync token accessors for the matrix client
+export function getSyncToken(): string | null {
+  return currentSyncToken
+}
+
+export function setSyncToken(token: string | null, workspace: string) {
+  currentSyncToken = token
+  persistState(workspace)
 }
 
 // get or create an opencode session for a matrix room
@@ -49,7 +75,7 @@ export async function getOrCreateSession(
   const existing = roomSessions.get(roomId)
   if (existing) {
     existing.lastActivity = Date.now()
-    persistRoomMappings(workspace)
+    persistState(workspace)
     return existing.sessionId
   }
 
@@ -60,7 +86,7 @@ export async function getOrCreateSession(
   const entry: RoomSession = { roomId, sessionId, title, lastActivity: Date.now() }
   roomSessions.set(roomId, entry)
   sessionToRoom.set(sessionId, roomId)
-  persistRoomMappings(workspace)
+  persistState(workspace)
   debug(`created session ${sessionId} for room ${roomId}`)
   return sessionId
 }
@@ -77,7 +103,7 @@ export function clearRoomMapping(roomId: string, workspace: string) {
   debug(`clearing stale mapping: room ${roomId} -> session ${entry.sessionId}`)
   sessionToRoom.delete(entry.sessionId)
   roomSessions.delete(roomId)
-  persistRoomMappings(workspace)
+  persistState(workspace)
 }
 
 // check if a session is a bridged session
@@ -187,7 +213,7 @@ export async function performCleanup(
   const newEntry: RoomSession = { roomId, sessionId: newId, title, lastActivity: Date.now() }
   roomSessions.set(roomId, newEntry)
   sessionToRoom.set(newId, roomId)
-  persistRoomMappings(workspace)
+  persistState(workspace)
   debug(`cleanup: rotated ${sessionId} -> ${newId} (${config.cleanup})`)
   return { newSessionId: newId, action: config.cleanup }
 }

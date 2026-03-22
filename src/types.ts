@@ -11,7 +11,6 @@ export interface BridgeConfig {
   max_response_length: number
   agent: string
   sync_timeout_ms: number
-  storage_path: string
   cleanup: 'none' | 'compact' | 'new' | 'archive'
   cleanup_tokens: number | null
   cleanup_message_count: number | null
@@ -31,7 +30,6 @@ export const DEFAULTS: BridgeConfig = {
   max_response_length: 4000,
   agent: 'per',
   sync_timeout_ms: 30000,
-  storage_path: 'state/',
   cleanup: 'none',
   cleanup_tokens: null,
   cleanup_message_count: null,
