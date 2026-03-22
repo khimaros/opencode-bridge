@@ -46,6 +46,7 @@ export interface RoomSession {
   sessionId: string
   title: string
   lastActivity: number
+  cleanupBaseline?: { tokens: number; messages: number }
 }
 
 // message part types from opencode

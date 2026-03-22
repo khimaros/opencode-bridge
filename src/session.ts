@@ -147,35 +147,44 @@ export async function promptSession(
   return result.data?.parts || []
 }
 
-// check if cleanup should be triggered based on token/message thresholds
+// fetch current message count and total tokens for a session
+async function sessionStats(client: any, sessionId: string): Promise<{ tokens: number; messages: number } | null> {
+  const msgs = await client.session.messages({ path: { id: sessionId } })
+  if (msgs.error) return null
+  const data = msgs.data || []
+  let tokens = 0
+  for (const m of data) {
+    const t = m.info?.tokens
+    if (t) tokens += (t.input || 0) + (t.output || 0)
+  }
+  return { tokens, messages: data.length }
+}
+
+// check if cleanup should be triggered based on token/message thresholds.
+// subtracts any post-cleanup baseline so compaction doesn't re-trigger immediately.
 export async function shouldCleanup(
   client: any, sessionId: string, config: BridgeConfig,
 ): Promise<boolean> {
   if (config.cleanup === 'none') return false
 
+  const stats = await sessionStats(client, sessionId)
+  if (!stats) return false
+
+  const baseline = roomSessions.get(getRoomForSession(sessionId) || '')?.cleanupBaseline
+
   if (config.cleanup_message_count !== null) {
-    const msgs = await client.session.messages({ path: { id: sessionId } })
-    if (!msgs.error) {
-      const count = (msgs.data || []).length
-      if (count >= config.cleanup_message_count) {
-        debug(`cleanup: message count limit (${count} >= ${config.cleanup_message_count})`)
-        return true
-      }
+    const effective = stats.messages - (baseline?.messages || 0)
+    if (effective >= config.cleanup_message_count) {
+      debug(`cleanup: message count limit (${stats.messages} - ${baseline?.messages || 0} >= ${config.cleanup_message_count})`)
+      return true
     }
   }
 
   if (config.cleanup_tokens !== null) {
-    const msgs = await client.session.messages({ path: { id: sessionId } })
-    if (!msgs.error) {
-      let total = 0
-      for (const m of (msgs.data || [])) {
-        const t = m.info?.tokens
-        if (t) total += (t.input || 0) + (t.output || 0)
-      }
-      if (total >= config.cleanup_tokens) {
-        debug(`cleanup: token limit (${total} >= ${config.cleanup_tokens})`)
-        return true
-      }
+    const effective = stats.tokens - (baseline?.tokens || 0)
+    if (effective >= config.cleanup_tokens) {
+      debug(`cleanup: token limit (${stats.tokens} - ${baseline?.tokens || 0} >= ${config.cleanup_tokens})`)
+      return true
     }
   }
 
@@ -197,6 +206,14 @@ export async function performCleanup(
     if (result.error) {
       debug(`cleanup compact failed: ${JSON.stringify(result.error)}`)
       return { newSessionId: null, action: 'compact failed' }
+    }
+    // record post-compaction baseline so shouldCleanup measures growth from here
+    const stats = await sessionStats(client, sessionId)
+    const entry = roomSessions.get(roomId)
+    if (entry && stats) {
+      entry.cleanupBaseline = stats
+      persistState(workspace)
+      debug(`cleanup: baseline set to ${stats.tokens} tokens, ${stats.messages} messages`)
     }
     debug(`cleanup: compacted session ${sessionId}`)
     return { newSessionId: null, action: 'compacted' }

@@ -500,6 +500,164 @@ console.log(JSON.stringify({{ model }}));
 finally:
     shutil.rmtree(tmp)
 
+# --- session: shouldCleanup respects baseline after compaction ---
+
+result, err = run_node("""
+import { shouldCleanup, performCleanup } from './dist/session.js';
+
+// mock client returning messages with token counts
+function mockClient(messages) {
+  return {
+    session: {
+      messages: async () => ({ data: messages, error: null }),
+      summarize: async () => ({ data: {}, error: null }),
+    },
+  };
+}
+
+function makeMsgs(count, tokensEach) {
+  return Array.from({ length: count }, (_, i) => ({
+    info: { tokens: { input: tokensEach, output: 0 } },
+  }));
+}
+
+// scenario: tokens exceed threshold -> should trigger
+const client1 = mockClient(makeMsgs(10, 6000));
+const r1 = await shouldCleanup(client1, 'sess1', {
+  cleanup: 'compact', cleanup_tokens: 50000, cleanup_message_count: null,
+});
+
+// scenario: after compaction, post-summary tokens still above threshold
+// simulate: performCleanup sets baseline, then shouldCleanup rechecks
+// first, set up a room mapping so performCleanup can store baseline
+import { getOrCreateSession, loadBridgeState } from './dist/session.js';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+const tmp = mkdtempSync(join(tmpdir(), 'bridge-test-'));
+loadBridgeState(tmp);
+
+const mockClient2 = {
+  session: {
+    create: async () => ({ data: { id: 'sess2' }, error: null }),
+    messages: async () => ({ data: makeMsgs(2, 15000), error: null }),
+    summarize: async () => ({ data: {}, error: null }),
+  },
+};
+const sessId = await getOrCreateSession(mockClient2, '!room:test', 'test', tmp);
+
+// trigger cleanup with tokens at 60000 (above 50000 threshold)
+const clientAbove = {
+  session: {
+    messages: async () => ({ data: makeMsgs(10, 6000), error: null }),
+    summarize: async () => ({ data: {}, error: null }),
+  },
+};
+const beforeCleanup = await shouldCleanup(clientAbove, sessId, {
+  cleanup: 'compact', cleanup_tokens: 50000, cleanup_message_count: null,
+});
+
+// perform the cleanup (should record baseline)
+await performCleanup(clientAbove, sessId, '!room:test', {
+  cleanup: 'compact', cleanup_tokens: 50000, cleanup_message_count: null,
+}, tmp, { providerID: 'test', modelID: 'test' });
+
+// after compaction, session still has 30000 tokens (summary)
+// this is below the original threshold but above 0
+const clientPostCompact = {
+  session: {
+    messages: async () => ({ data: makeMsgs(2, 15000), error: null }),
+    summarize: async () => ({ data: {}, error: null }),
+  },
+};
+const afterCleanup = await shouldCleanup(clientPostCompact, sessId, {
+  cleanup: 'compact', cleanup_tokens: 50000, cleanup_message_count: null,
+});
+
+// now add enough tokens past baseline to exceed threshold again
+// baseline was 60000, so need 60000 + 50000 = 110000
+const clientGrown = {
+  session: {
+    messages: async () => ({ data: makeMsgs(20, 5500), error: null }),
+    summarize: async () => ({ data: {}, error: null }),
+  },
+};
+const afterGrowth = await shouldCleanup(clientGrown, sessId, {
+  cleanup: 'compact', cleanup_tokens: 50000, cleanup_message_count: null,
+});
+
+console.log(JSON.stringify({
+  triggers_above_threshold: r1,
+  triggers_before_cleanup: beforeCleanup,
+  suppressed_after_cleanup: afterCleanup,
+  triggers_after_growth: afterGrowth,
+}));
+""")
+if err:
+    check("shouldCleanup baseline (build required)", False, err.strip())
+else:
+    check("shouldCleanup: triggers above threshold", result["triggers_above_threshold"])
+    check("shouldCleanup: triggers before cleanup", result["triggers_before_cleanup"])
+    check("shouldCleanup: suppressed after compaction",
+          not result["suppressed_after_cleanup"],
+          f"got: {result['suppressed_after_cleanup']}")
+    check("shouldCleanup: triggers after growth past baseline",
+          result["triggers_after_growth"])
+
+# --- session: shouldCleanup message count baseline ---
+
+result, err = run_node("""
+import { shouldCleanup, performCleanup, getOrCreateSession, loadBridgeState } from './dist/session.js';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const tmp = mkdtempSync(join(tmpdir(), 'bridge-test-'));
+loadBridgeState(tmp);
+
+function makeMsgs(count) {
+  return Array.from({ length: count }, () => ({ info: { tokens: { input: 100, output: 100 } } }));
+}
+
+const mockClient = {
+  session: {
+    create: async () => ({ data: { id: 'sess-mc' }, error: null }),
+    messages: async () => ({ data: makeMsgs(20), error: null }),
+    summarize: async () => ({ data: {}, error: null }),
+  },
+};
+const sessId = await getOrCreateSession(mockClient, '!mc-room:test', 'test', tmp);
+
+// 20 messages >= 15 threshold -> should trigger
+const before = await shouldCleanup(mockClient, sessId, {
+  cleanup: 'compact', cleanup_tokens: null, cleanup_message_count: 15,
+});
+
+// compact sets baseline
+await performCleanup(mockClient, sessId, '!mc-room:test', {
+  cleanup: 'compact', cleanup_tokens: null, cleanup_message_count: 15,
+}, tmp, { providerID: 'test', modelID: 'test' });
+
+// post-compaction: still 20 messages (summary) but below baseline + threshold
+const postCompact = {
+  session: {
+    messages: async () => ({ data: makeMsgs(5), error: null }),
+    summarize: async () => ({ data: {}, error: null }),
+  },
+};
+const after = await shouldCleanup(postCompact, sessId, {
+  cleanup: 'compact', cleanup_tokens: null, cleanup_message_count: 15,
+});
+
+console.log(JSON.stringify({ before, after }));
+""")
+if err:
+    check("shouldCleanup message baseline (build required)", False, err.strip())
+else:
+    check("shouldCleanup msg: triggers before cleanup", result["before"])
+    check("shouldCleanup msg: suppressed after cleanup",
+          not result["after"], f"got: {result['after']}")
+
 # --- summary ---
 
 total = PASS + FAIL

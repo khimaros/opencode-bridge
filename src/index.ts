@@ -129,7 +129,7 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
         const { action } = await performCleanup(
           client, sessionId, roomId, CONFIG, WORKSPACE, lastModel,
         )
-        await matrixClient.sendNotice(roomId, `[bridge: ${action}]`)
+        debug(`cleanup: ${action}`)
       }
     } catch (e: any) {
       debug(`message handling failed for room ${roomId}: ${e.message}`)
