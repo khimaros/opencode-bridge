@@ -274,10 +274,15 @@ else:
 
 result, err = run_node("""
 import { formatSystemPromptAddendum } from './dist/format.js';
+import { DEFAULTS } from './dist/types.js';
+const config = { ...DEFAULTS };
+const customConfig = { ...DEFAULTS, system_prompt: 'you are a helpful bot. reply with [NO_RESPONSE] if unsure.' };
 console.log(JSON.stringify({
-  dm: formatSystemPromptAddendum('!room:ex.org', ['alice', 'bot'], true),
-  group: formatSystemPromptAddendum('!room:ex.org', ['alice', 'bob', 'bot'], false),
-  no_members: formatSystemPromptAddendum('!room:ex.org', [], false),
+  dm: formatSystemPromptAddendum('!room:ex.org', ['alice', 'bot'], true, config),
+  group: formatSystemPromptAddendum('!room:ex.org', ['alice', 'bob', 'bot'], false, config),
+  no_members: formatSystemPromptAddendum('!room:ex.org', [], false, config),
+  custom_group: formatSystemPromptAddendum('!room:ex.org', ['alice'], false, customConfig),
+  custom_dm: formatSystemPromptAddendum('!room:ex.org', ['alice'], true, customConfig),
 }));
 """)
 if err:
@@ -292,8 +297,16 @@ else:
           "NO_RESPONSE" in result["group"])
     check("formatSystemPromptAddendum: group has attribution note",
           "[username]" in result["group"])
+    check("formatSystemPromptAddendum: group has formatting guidance",
+          "plain text" in result["group"].lower() or "formatting" in result["group"].lower())
+    check("formatSystemPromptAddendum: group has brevity instruction",
+          "short" in result["group"].lower() or "concise" in result["group"].lower())
     check("formatSystemPromptAddendum: no members skips participants line",
           "participants" not in result["no_members"])
+    check("formatSystemPromptAddendum: custom prompt used for group",
+          "helpful bot" in result["custom_group"])
+    check("formatSystemPromptAddendum: custom prompt skipped for DM",
+          "helpful bot" not in result["custom_dm"])
 
 # --- format: formatCompactionContext ---
 

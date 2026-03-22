@@ -70,7 +70,7 @@ function formatToolCall(part: { tool: string; state: string }): string {
 }
 
 // generate the system prompt addendum for bridged sessions
-export function formatSystemPromptAddendum(roomId: string, members: string[], isDm: boolean): string {
+export function formatSystemPromptAddendum(roomId: string, members: string[], isDm: boolean, config: BridgeConfig): string {
   const lines = [
     'this session is bridged from a matrix chat room.',
     `room: ${roomId}`,
@@ -78,11 +78,9 @@ export function formatSystemPromptAddendum(roomId: string, members: string[], is
   if (members.length > 0) {
     lines.push(`participants: ${members.join(', ')}`)
   }
-  if (!isDm) {
+  if (!isDm && config.system_prompt) {
     lines.push('')
-    lines.push('messages from different users are prefixed with [username].')
-    lines.push('if a message is not directed at you or does not warrant a response,')
-    lines.push(`reply with exactly: ${NO_RESPONSE_MARKER}`)
+    lines.push(config.system_prompt)
   }
   return lines.join('\n')
 }

@@ -188,7 +188,7 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
         try {
           members = await getRoomMembers(matrixClient, roomId, botUserId)
         } catch {}
-        const addendum = formatSystemPromptAddendum(roomId, members, isDm)
+        const addendum = formatSystemPromptAddendum(roomId, members, isDm, CONFIG)
         output.system.push(addendum)
       } catch (e: any) {
         debug(`system.transform failed: ${e.message}`)

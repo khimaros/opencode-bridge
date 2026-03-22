@@ -23,6 +23,10 @@
   // accepts "provider/model" string or { "providerID": "...", "modelID": "..." }
   // "model": "anthropic/claude-sonnet-4-5",
 
+  // custom system prompt instructions for group rooms (appended after room context)
+  // set to "" to disable. default includes NO_RESPONSE opt-out and formatting guidance.
+  // "system_prompt": "messages from different users are prefixed with [username].\nif a message is not directed at you or does not warrant a response,\nreply with exactly: [NO_RESPONSE]\nkeep responses short and concise.\nprefer plain text or minimal formatting, as not all matrix clients render markdown.",
+
   // opencode agent to use for prompts
   "agent": "per",
 

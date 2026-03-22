@@ -15,7 +15,10 @@ export interface BridgeConfig {
   cleanup_tokens: number | null
   cleanup_message_count: number | null
   model: { providerID: string; modelID: string } | null
+  system_prompt: string
 }
+
+export const NO_RESPONSE_MARKER = '[NO_RESPONSE]'
 
 export const DEFAULTS: BridgeConfig = {
   homeserver: '',
@@ -34,9 +37,14 @@ export const DEFAULTS: BridgeConfig = {
   cleanup_tokens: null,
   cleanup_message_count: null,
   model: null,
+  system_prompt: [
+    'messages from different users are prefixed with [username].',
+    'if a message is not directed at you or does not warrant a response,',
+    `reply with exactly: ${NO_RESPONSE_MARKER}`,
+    'keep responses short and concise.',
+    'prefer plain text or minimal formatting, as not all matrix clients render markdown.',
+  ].join('\n'),
 }
-
-export const NO_RESPONSE_MARKER = '[NO_RESPONSE]'
 
 export const LOG_PREFIX = '[bridge]'
 
