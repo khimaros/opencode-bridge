@@ -1,8 +1,9 @@
 {
   // required: matrix homeserver and bot identity
+  // all fields can be overridden via BRIDGE_* env vars (e.g. BRIDGE_HOMESERVER)
   "homeserver": "https://matrix.example.org",
   "user_id": "@bridge-bot:example.org",
-  "access_token": "syt_...",  // or set MATRIX_ACCESS_TOKEN env var
+  "access_token": "syt_...",  // or set BRIDGE_ACCESS_TOKEN env var
 
   // room filtering (empty allowlist = all joined rooms)
   "room_allowlist": [],

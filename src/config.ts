@@ -43,26 +43,46 @@ export function stripJsoncComments(raw: string): string {
   return result
 }
 
+// env var mapping: BRIDGE_FIELD_NAME -> config field
+const ENV_OVERRIDES: Record<string, keyof BridgeConfig> = {
+  BRIDGE_HOMESERVER: 'homeserver',
+  BRIDGE_USER_ID: 'user_id',
+  BRIDGE_ACCESS_TOKEN: 'access_token',
+  BRIDGE_MODEL: 'model',
+  BRIDGE_AGENT: 'agent',
+  BRIDGE_DEFAULT_TRIGGER: 'default_trigger',
+  BRIDGE_CLEANUP: 'cleanup',
+}
+
+function applyEnvOverrides(config: any) {
+  for (const [envVar, field] of Object.entries(ENV_OVERRIDES)) {
+    const val = process.env[envVar]
+    if (val !== undefined) config[field] = val
+  }
+}
+
+// normalize model: accept "provider/model" string or { providerID, modelID } object
+function normalizeModel(config: any) {
+  if (typeof config.model === 'string' && config.model.includes('/')) {
+    const [providerID, ...rest] = config.model.split('/')
+    config.model = { providerID, modelID: rest.join('/') }
+  }
+}
+
 export function loadConfig(workspace: string): BridgeConfig {
   const configPath = path.join(workspace, 'config', 'bridge.jsonc')
+  let parsed: any
   try {
     const raw = readFileSync(configPath, 'utf-8')
     const json = stripJsoncComments(raw)
-    const parsed = { ...DEFAULTS, ...JSON.parse(json) }
-    // allow access token from env var
-    if (!parsed.access_token) {
-      parsed.access_token = process.env.MATRIX_ACCESS_TOKEN || ''
-    }
-    // normalize model: accept "provider/model" string or { providerID, modelID } object
-    if (typeof parsed.model === 'string' && parsed.model.includes('/')) {
-      const [providerID, ...rest] = parsed.model.split('/')
-      parsed.model = { providerID, modelID: rest.join('/') }
-    }
-    return parsed
+    parsed = { ...DEFAULTS, ...JSON.parse(json) }
   } catch (e: any) {
     console.error(`${LOG_PREFIX}: no config found at ${configPath}, using defaults: ${e.message}`)
-    return { ...DEFAULTS }
+    parsed = { ...DEFAULTS }
   }
+  applyEnvOverrides(parsed)
+  normalizeModel(parsed)
+  return parsed
 }
 
 export function validateConfig(config: BridgeConfig): string[] {

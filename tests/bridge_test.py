@@ -17,12 +17,15 @@ def check(desc, ok, detail=""):
         if detail:
             print(f"  {detail}")
 
-def run_node(script):
+def run_node(script, env_override=None):
     """run a node script that imports our modules and returns JSON on stdout."""
+    env = None
+    if env_override:
+        env = {**os.environ, **env_override}
     proc = subprocess.run(
         ["node", "--input-type=module"],
         input=script, capture_output=True, text=True,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(PROJECT_ROOT), env=env,
     )
     if proc.returncode != 0:
         return None, proc.stderr
@@ -328,6 +331,97 @@ if err:
 else:
     check("validateConfig: missing model is not an error",
           len(result["noModel"]) == 0, f"got: {result['noModel']}")
+
+# --- config: env vars override config values ---
+
+tmp = tempfile.mkdtemp()
+try:
+    os.makedirs(os.path.join(tmp, "config"))
+    config_content = """{
+  "homeserver": "https://config.matrix.org",
+  "user_id": "@config-bot:matrix.org",
+  "access_token": "config_token",
+  "model": "anthropic/claude-sonnet-4-5",
+  "agent": "config-agent"
+}"""
+    with open(os.path.join(tmp, "config", "bridge.jsonc"), "w") as f:
+        f.write(config_content)
+
+    result, err = run_node(f"""
+import {{ loadConfig }} from './dist/config.js';
+const config = loadConfig({json.dumps(tmp)});
+console.log(JSON.stringify(config));
+""", env_override={
+        "BRIDGE_HOMESERVER": "https://env.matrix.org",
+        "BRIDGE_USER_ID": "@env-bot:matrix.org",
+        "BRIDGE_ACCESS_TOKEN": "env_token",
+        "BRIDGE_MODEL": "openai/gpt-4o",
+        "BRIDGE_AGENT": "env-agent",
+    })
+    if err:
+        check("env override (build required)", False, err.strip())
+    else:
+        check("env override: homeserver", result["homeserver"] == "https://env.matrix.org",
+              f"got: {result['homeserver']}")
+        check("env override: user_id", result["user_id"] == "@env-bot:matrix.org",
+              f"got: {result['user_id']}")
+        check("env override: access_token", result["access_token"] == "env_token",
+              f"got: {result['access_token']}")
+        check("env override: model normalized",
+              result["model"] == {"providerID": "openai", "modelID": "gpt-4o"},
+              f"got: {result['model']}")
+        check("env override: agent", result["agent"] == "env-agent",
+              f"got: {result['agent']}")
+finally:
+    shutil.rmtree(tmp)
+
+# --- config: env vars work without config file ---
+
+result, err = run_node("""
+import { loadConfig } from './dist/config.js';
+const config = loadConfig('/nonexistent/path');
+console.log(JSON.stringify(config));
+""", env_override={
+    "BRIDGE_HOMESERVER": "https://env-only.matrix.org",
+    "BRIDGE_USER_ID": "@env-only:matrix.org",
+    "BRIDGE_ACCESS_TOKEN": "env_only_token",
+})
+if err:
+    check("env without config (build required)", False, err.strip())
+else:
+    check("env without config: homeserver", result["homeserver"] == "https://env-only.matrix.org",
+          f"got: {result['homeserver']}")
+    check("env without config: user_id", result["user_id"] == "@env-only:matrix.org",
+          f"got: {result['user_id']}")
+    check("env without config: access_token", result["access_token"] == "env_only_token",
+          f"got: {result['access_token']}")
+    check("env without config: defaults preserved", result["max_response_length"] == 4000)
+
+# --- config: env vars for cleanup and trigger ---
+
+tmp = tempfile.mkdtemp()
+try:
+    os.makedirs(os.path.join(tmp, "config"))
+    with open(os.path.join(tmp, "config", "bridge.jsonc"), "w") as f:
+        f.write('{"homeserver":"h","user_id":"u","access_token":"a"}')
+
+    result, err = run_node(f"""
+import {{ loadConfig }} from './dist/config.js';
+const config = loadConfig({json.dumps(tmp)});
+console.log(JSON.stringify(config));
+""", env_override={
+        "BRIDGE_DEFAULT_TRIGGER": "all",
+        "BRIDGE_CLEANUP": "compact",
+    })
+    if err:
+        check("env trigger/cleanup (build required)", False, err.strip())
+    else:
+        check("env override: default_trigger", result["default_trigger"] == "all",
+              f"got: {result['default_trigger']}")
+        check("env override: cleanup", result["cleanup"] == "compact",
+              f"got: {result['cleanup']}")
+finally:
+    shutil.rmtree(tmp)
 
 # --- session: model persistence ---
 
