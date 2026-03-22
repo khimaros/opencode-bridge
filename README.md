@@ -4,7 +4,7 @@ opencode plugin to bridge external chat protocols into opencode sessions.
 
 ## supported protocols
 
-- matrix (via matrix-bot-sdk)
+- matrix
 
 ## features
 
@@ -14,6 +14,7 @@ opencode plugin to bridge external chat protocols into opencode sessions.
 - LLM opt-out for irrelevant messages (`[NO_RESPONSE]`)
 - typing indicators while processing
 - context cleanup (compact, rotate, archive) on token/message thresholds
+- model auto-detection — persisted to `state/bridge.json` when not configured
 - composes with opencode-evolve and other plugins
 
 ## setup
@@ -30,7 +31,7 @@ opencode plugin to bridge external chat protocols into opencode sessions.
 }
 ```
 
-or set `MATRIX_ACCESS_TOKEN` environment variable.
+all config fields can be overridden via `BRIDGE_*` env vars (e.g. `BRIDGE_HOMESERVER`, `BRIDGE_ACCESS_TOKEN`, `BRIDGE_MODEL`). env vars always take precedence over config file values.
 
 ## configuration
 
@@ -40,6 +41,5 @@ see `config/bridge.jsonc.example` for all options.
 
 ```sh
 npm install
-make build
-make test
+make precommit
 ```
