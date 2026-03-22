@@ -66,6 +66,16 @@ export class MatrixClient {
     return Object.keys(data.joined || {})
   }
 
+  // fetch the bot's m.direct account data to determine DM rooms
+  async getDirectRooms(): Promise<Set<string>> {
+    const data = await this.api('GET', `/user/${encodeURIComponent(this.userId)}/account_data/m.direct`)
+    const roomIds = new Set<string>()
+    for (const rooms of Object.values(data) as string[][]) {
+      for (const id of rooms) roomIds.add(id)
+    }
+    return roomIds
+  }
+
   async sendMessage(roomId: string, content: any) {
     const txnId = `bridge_${Date.now()}_${Math.random().toString(36).slice(2)}`
     await this.api('PUT', `/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${txnId}`, content)
@@ -116,6 +126,14 @@ export class MatrixClient {
     const timeout = config.sync_timeout_ms
     const MAX_AGE_MS = 30000
 
+    // cache of DM room IDs from m.direct account data
+    let directRooms = new Set<string>()
+    const refreshDirectRooms = async () => {
+      directRooms = await this.getDirectRooms().catch(() => new Set<string>())
+    }
+    await refreshDirectRooms()
+    debug(`m.direct rooms: ${[...directRooms].join(', ') || '(none)'}`)
+
     debug('starting matrix sync')
     while (this.running) {
       try {
@@ -139,6 +157,13 @@ export class MatrixClient {
         const data = await resp.json() as any
         this.syncToken = data.next_batch
         this.saveSyncToken()
+
+        // refresh DM list when m.direct account data changes
+        const accountEvents = data.account_data?.events || []
+        if (accountEvents.some((e: any) => e.type === 'm.direct')) {
+          await refreshDirectRooms()
+          debug(`m.direct rooms updated: ${[...directRooms].join(', ') || '(none)'}`)
+        }
 
         // process invites — auto-join allowed rooms
         for (const [roomId, invite] of Object.entries(data.rooms?.invite || {})) {
@@ -173,8 +198,7 @@ export class MatrixClient {
             if (!body.trim()) continue
 
             debug(`sync: dispatching message from ${event.sender} in ${roomId}`)
-            const members = await this.getJoinedMembers(roomId).catch(() => [])
-            const isDm = members.length === 2
+            const isDm = directRooms.has(roomId)
             onMessage({ roomId, sender: event.sender, body, eventId: event.event_id, isDm })
           }
         }
