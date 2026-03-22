@@ -26,10 +26,14 @@ def run_node(script):
     )
     if proc.returncode != 0:
         return None, proc.stderr
-    try:
-        return json.loads(proc.stdout.strip()), None
-    except json.JSONDecodeError:
-        return None, f"invalid json: {proc.stdout}"
+    # parse last non-empty line as JSON (debug output may precede it)
+    lines = [l for l in proc.stdout.strip().split('\n') if l.strip()]
+    for line in reversed(lines):
+        try:
+            return json.loads(line), None
+        except json.JSONDecodeError:
+            continue
+    return None, f"invalid json: {proc.stdout}"
 
 # --- config: stripJsoncComments ---
 
@@ -304,6 +308,103 @@ else:
     check("formatCompactionContext: has members", "alice" in result["with_members"])
     check("formatCompactionContext: has preserve instruction", "preserve" in result["with_members"].lower())
     check("formatCompactionContext: no members", "participants" not in result["no_members"])
+
+# --- config: validateConfig allows missing model ---
+
+result, err = run_node("""
+import { validateConfig } from './dist/config.js';
+import { DEFAULTS } from './dist/types.js';
+const noModel = validateConfig({
+  ...DEFAULTS,
+  homeserver: 'https://matrix.example.org',
+  user_id: '@bot:example.org',
+  access_token: 'syt_abc',
+  model: null,
+});
+console.log(JSON.stringify({ noModel }));
+""")
+if err:
+    check("validateConfig model optional (build required)", False, err.strip())
+else:
+    check("validateConfig: missing model is not an error",
+          len(result["noModel"]) == 0, f"got: {result['noModel']}")
+
+# --- session: model persistence ---
+
+tmp = tempfile.mkdtemp()
+try:
+    result, err = run_node(f"""
+import {{ loadBridgeState, loadModel, persistModel }} from './dist/session.js';
+loadBridgeState({json.dumps(tmp)});
+
+// initially no model
+const before = loadModel();
+
+// persist a model
+persistModel({{ providerID: 'anthropic', modelID: 'claude-sonnet-4-5' }}, {json.dumps(tmp)});
+const after = loadModel();
+
+// persist same model again (should be a no-op, no error)
+persistModel({{ providerID: 'anthropic', modelID: 'claude-sonnet-4-5' }}, {json.dumps(tmp)});
+const afterSame = loadModel();
+
+// persist different model
+persistModel({{ providerID: 'openai', modelID: 'gpt-4o' }}, {json.dumps(tmp)});
+const afterDiff = loadModel();
+
+console.log(JSON.stringify({{ before, after, afterSame, afterDiff }}));
+""")
+    if err:
+        check("model persistence (build required)", False, err.strip())
+    else:
+        check("loadModel: initially null", result["before"] is None)
+        check("persistModel: stores model",
+              result["after"] == {"providerID": "anthropic", "modelID": "claude-sonnet-4-5"})
+        check("persistModel: idempotent",
+              result["afterSame"] == {"providerID": "anthropic", "modelID": "claude-sonnet-4-5"})
+        check("persistModel: updates on change",
+              result["afterDiff"] == {"providerID": "openai", "modelID": "gpt-4o"})
+
+    # verify state file on disk has model
+    state_file = os.path.join(tmp, "state", "bridge.json")
+    if os.path.exists(state_file):
+        with open(state_file) as f:
+            state = json.load(f)
+        check("state file: has model field",
+              state.get("model") == {"providerID": "openai", "modelID": "gpt-4o"},
+              f"got: {state.get('model')}")
+    else:
+        check("state file: exists", False, "state/bridge.json not found")
+finally:
+    shutil.rmtree(tmp)
+
+# --- session: model loaded from state on startup ---
+
+tmp = tempfile.mkdtemp()
+try:
+    os.makedirs(os.path.join(tmp, "state"))
+    state = {
+        "rooms": [],
+        "sync_token": None,
+        "model": {"providerID": "anthropic", "modelID": "claude-sonnet-4-5"},
+    }
+    with open(os.path.join(tmp, "state", "bridge.json"), "w") as f:
+        json.dump(state, f)
+
+    result, err = run_node(f"""
+import {{ loadBridgeState, loadModel }} from './dist/session.js';
+loadBridgeState({json.dumps(tmp)});
+const model = loadModel();
+console.log(JSON.stringify({{ model }}));
+""")
+    if err:
+        check("model from state on startup (build required)", False, err.strip())
+    else:
+        check("loadModel: loads from persisted state",
+              result["model"] == {"providerID": "anthropic", "modelID": "claude-sonnet-4-5"},
+              f"got: {result['model']}")
+finally:
+    shutil.rmtree(tmp)
 
 # --- summary ---
 

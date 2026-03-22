@@ -18,6 +18,10 @@
   "display_reasoning": false,
   "max_response_length": 4000,
 
+  // model to use (optional — auto-detected from opencode if omitted)
+  // accepts "provider/model" string or { "providerID": "...", "modelID": "..." }
+  // "model": "anthropic/claude-sonnet-4-5",
+
   // opencode agent to use for prompts
   "agent": "per",
 

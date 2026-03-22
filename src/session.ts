@@ -22,13 +22,14 @@ function statePath(workspace: string): string {
 interface BridgeState {
   rooms: RoomSession[]
   sync_token: string | null
+  model: { providerID: string; modelID: string } | null
 }
 
 function loadState(workspace: string): BridgeState {
   try {
     return JSON.parse(readFileSync(statePath(workspace), 'utf-8'))
   } catch {
-    return { rooms: [], sync_token: null }
+    return { rooms: [], sync_token: null, model: null }
   }
 }
 
@@ -38,6 +39,7 @@ function persistState(workspace: string) {
     const state: BridgeState = {
       rooms: Array.from(roomSessions.values()),
       sync_token: currentSyncToken,
+      model: currentModel,
     }
     writeFileSync(statePath(workspace), JSON.stringify(state, null, 2) + '\n')
   } catch (e: any) {
@@ -46,6 +48,7 @@ function persistState(workspace: string) {
 }
 
 let currentSyncToken: string | null = null
+let currentModel: { providerID: string; modelID: string } | null = null
 
 // load all persisted state from disk
 export function loadBridgeState(workspace: string) {
@@ -55,7 +58,20 @@ export function loadBridgeState(workspace: string) {
     sessionToRoom.set(entry.sessionId, entry.roomId)
   }
   currentSyncToken = state.sync_token
+  currentModel = state.model || null
   debug(`loaded ${roomSessions.size} room mapping(s)`)
+}
+
+// model accessors — auto-persist model detected from chat.message hook
+export function loadModel(): { providerID: string; modelID: string } | null {
+  return currentModel
+}
+
+export function persistModel(model: { providerID: string; modelID: string }, workspace: string) {
+  if (currentModel?.providerID === model.providerID && currentModel?.modelID === model.modelID) return
+  currentModel = model
+  persistState(workspace)
+  debug(`persisted model: ${model.providerID}/${model.modelID}`)
 }
 
 // sync token accessors for the matrix client

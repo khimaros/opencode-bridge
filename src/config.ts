@@ -70,6 +70,5 @@ export function validateConfig(config: BridgeConfig): string[] {
   if (!config.homeserver) errors.push('homeserver is required')
   if (!config.user_id) errors.push('user_id is required')
   if (!config.access_token) errors.push('access_token is required (config or MATRIX_ACCESS_TOKEN env)')
-  if (!config.model) errors.push('model is required (e.g. "anthropic/claude-sonnet-4-5")')
   return errors
 }

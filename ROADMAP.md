@@ -2,6 +2,8 @@
 
 ## in progress
 
+- [x] persist model to state/bridge.json when not explicitly configured
+- [x] rename heartbeat_model to model in opencode-evolve config for consistency
 - [ ] add integration tests for session.ts (mocked opencode client)
 - [ ] add integration tests for matrix.ts (mocked matrix sync)
 - [ ] add end-to-end test for full message flow

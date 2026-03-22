@@ -8,7 +8,7 @@ import {
   loadBridgeState, getSyncToken, setSyncToken,
   getOrCreateSession, getRoomForSession,
   isBridgedSession, promptSession, shouldCleanup, performCleanup,
-  enqueueForRoom, clearRoomMapping,
+  enqueueForRoom, clearRoomMapping, loadModel, persistModel,
 } from './session.js'
 import {
   formatIncomingMessage, formatOutgoingParts, formatSystemPromptAddendum,
@@ -42,7 +42,7 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
 
   loadBridgeState(WORKSPACE)
 
-  let lastModel: any = CONFIG.model || null
+  let lastModel: any = CONFIG.model || loadModel()
   if (lastModel) debug(`model: ${lastModel.providerID}/${lastModel.modelID}`)
   else debug('no model configured — will use opencode default')
   const matrixClient = new MatrixClient(
@@ -158,7 +158,10 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
     // relay opencode responses to matrix for bridged sessions
     'chat.message': async (input, output) => {
       try {
-        if (input.model) lastModel = input.model
+        if (input.model) {
+          lastModel = input.model
+          persistModel(input.model, WORKSPACE)
+        }
 
         const roomId = getRoomForSession(input.sessionID)
         if (!roomId) return // not a bridged session
