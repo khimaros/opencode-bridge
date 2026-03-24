@@ -70,7 +70,8 @@ export class MatrixClient {
   async getDirectRooms(): Promise<Set<string>> {
     const data = await this.api('GET', `/user/${encodeURIComponent(this.userId)}/account_data/m.direct`)
     const roomIds = new Set<string>()
-    for (const rooms of Object.values(data) as string[][]) {
+    for (const [userId, rooms] of Object.entries(data) as [string, string[]][]) {
+      debug(`m.direct: ${userId} -> ${rooms.join(', ')}`)
       for (const id of rooms) roomIds.add(id)
     }
     return roomIds
@@ -197,8 +198,14 @@ export class MatrixClient {
             const body = event.content.body || ''
             if (!body.trim()) continue
 
-            debug(`sync: dispatching message from ${event.sender} in ${roomId}`)
-            const isDm = directRooms.has(roomId)
+            const inMDirect = directRooms.has(roomId)
+            let memberCount = 0
+            try {
+              const members = await this.getJoinedMembers(roomId)
+              memberCount = members.length
+            } catch {}
+            const isDm = memberCount === 2
+            debug(`sync: dispatching message from ${event.sender} in ${roomId} isDm=${isDm} inMDirect=${inMDirect} members=${memberCount}`)
             onMessage({ roomId, sender: event.sender, body, eventId: event.event_id, isDm })
           }
         }

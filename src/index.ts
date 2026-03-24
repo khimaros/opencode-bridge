@@ -183,11 +183,11 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
         debug(`system.transform: session=${input.sessionID} bridged=${isBridgedSession(input.sessionID || '')} system_parts=${output.system.length} system_len=${output.system.join('').length}`)
         if (!input.sessionID || !isBridgedSession(input.sessionID)) return
         const roomId = getRoomForSession(input.sessionID)!
-        const isDm = false // conservative default for system prompt
         let members: string[] = []
         try {
           members = await getRoomMembers(matrixClient, roomId, botUserId)
         } catch {}
+        const isDm = members.length === 1 // getRoomMembers excludes bot, so 1 = DM
         const addendum = formatSystemPromptAddendum(roomId, members, isDm, CONFIG)
         output.system.push(addendum)
       } catch (e: any) {
