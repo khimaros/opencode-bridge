@@ -43,21 +43,19 @@ export function stripJsoncComments(raw: string): string {
   return result
 }
 
-// env var mapping: BRIDGE_FIELD_NAME -> config field
-const ENV_OVERRIDES: Record<string, keyof BridgeConfig> = {
-  BRIDGE_HOMESERVER: 'homeserver',
-  BRIDGE_USER_ID: 'user_id',
-  BRIDGE_ACCESS_TOKEN: 'access_token',
-  BRIDGE_MODEL: 'model',
-  BRIDGE_AGENT: 'agent',
-  BRIDGE_DEFAULT_TRIGGER: 'default_trigger',
-  BRIDGE_CLEANUP: 'cleanup',
+// coerce env string to match the type of the existing config value
+function coerceEnv(val: string, existing: any): any {
+  if (existing === null || typeof existing === 'string') return val === 'null' ? null : val
+  if (typeof existing === 'number') return val === 'null' ? null : Number(val)
+  if (typeof existing === 'boolean') return val === 'true'
+  return val
 }
 
+// apply BRIDGE_<FIELD> env vars to config (e.g. BRIDGE_HOMESERVER -> homeserver)
 function applyEnvOverrides(config: any) {
-  for (const [envVar, field] of Object.entries(ENV_OVERRIDES)) {
-    const val = process.env[envVar]
-    if (val !== undefined) config[field] = val
+  for (const field of Object.keys(DEFAULTS)) {
+    const val = process.env[`BRIDGE_${field.toUpperCase()}`]
+    if (val !== undefined) config[field] = coerceEnv(val, DEFAULTS[field as keyof BridgeConfig])
   }
 }
 
