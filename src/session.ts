@@ -7,6 +7,17 @@ function debug(msg: string) {
   console.log(`${LOG_PREFIX}: ${msg}`)
 }
 
+function formatDatetime(date: Date, timezone = 'UTC'): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    fractionalSecondDigits: 3, hour12: false, timeZoneName: 'longOffset',
+  })
+  const p = Object.fromEntries(fmt.formatToParts(date).map(v => [v.type, v.value]))
+  const offset = p.timeZoneName === 'GMT' ? '+00:00' : p.timeZoneName!.replace('GMT', '')
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}.${p.fractionalSecond}${offset}`
+}
+
 // persisted room-to-session mapping
 const roomSessions = new Map<string, RoomSession>()
 // reverse lookup: session ID -> room ID
@@ -246,7 +257,7 @@ export async function performCleanup(
 
   // rotate: create new session
   const entry = roomSessions.get(roomId)
-  const title = `${entry?.title || roomId} (${new Date().toISOString()})`
+  const title = `${entry?.title || roomId} (${formatDatetime(new Date())})`
   const created = await client.session.create({ body: { title } })
   if (created.error) throw new Error(`create session failed: ${JSON.stringify(created.error)}`)
 
