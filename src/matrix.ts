@@ -102,6 +102,56 @@ export class MatrixClient {
     await this.api('POST', `/join/${encodeURIComponent(roomId)}`, {})
   }
 
+  // find an existing DM room for a user, or create one
+  async findOrCreateDmRoom(userId: string): Promise<string> {
+    // check m.direct account data for existing DM
+    const mDirect = await this.api('GET',
+      `/user/${encodeURIComponent(this.userId)}/account_data/m.direct`,
+    ).catch(() => ({}))
+    const candidates = (mDirect[userId] || []) as string[]
+    // prefer the most recently added room (appended last by addDirectRoom)
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const roomId = candidates[i]
+      const members = await this.getJoinedMembers(roomId).catch((): string[] => [])
+      if (members.includes(this.userId)) return roomId
+    }
+
+    // create new unencrypted DM room (private_chat avoids auto-encryption)
+    const result = await this.api('POST', '/createRoom', {
+      invite: [userId],
+      is_direct: true,
+      preset: 'private_chat',
+    })
+    // update m.direct account data so future lookups find this room
+    mDirect[userId] = [...(mDirect[userId] || []), result.room_id]
+    await this.api('PUT',
+      `/user/${encodeURIComponent(this.userId)}/account_data/m.direct`,
+      mDirect,
+    )
+    return result.room_id
+  }
+
+  // add a room to the bot's m.direct account data for a given user
+  async addDirectRoom(userId: string, roomId: string) {
+    const mDirect = await this.api('GET',
+      `/user/${encodeURIComponent(this.userId)}/account_data/m.direct`,
+    ).catch(() => ({}))
+    const existing = (mDirect[userId] || []) as string[]
+    if (existing.includes(roomId)) return
+    mDirect[userId] = [...existing, roomId]
+    await this.api('PUT',
+      `/user/${encodeURIComponent(this.userId)}/account_data/m.direct`,
+      mDirect,
+    )
+    debug(`m.direct: added ${roomId} for ${userId}`)
+  }
+
+  // extract homeserver domain from the bot's user ID
+  getHomeserverDomain(): string {
+    const match = this.userId.match(/:(.+)$/)
+    return match ? match[1] : ''
+  }
+
   // verify access token and return the authenticated user ID
   async whoami(): Promise<string> {
     const data = await this.api('GET', '/account/whoami')
@@ -205,6 +255,11 @@ export class MatrixClient {
               memberCount = members.length
             } catch {}
             const isDm = memberCount === 2
+            if (isDm && !inMDirect) {
+              directRooms.add(roomId)
+              this.addDirectRoom(event.sender, roomId).catch((e: any) =>
+                debug(`m.direct update failed: ${e.message}`))
+            }
             debug(`sync: dispatching message from ${event.sender} in ${roomId} isDm=${isDm} inMDirect=${inMDirect} members=${memberCount}`)
             onMessage({ roomId, sender: event.sender, body, eventId: event.event_id, isDm })
           }

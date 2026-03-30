@@ -127,6 +127,16 @@ export function isBridgedSession(sessionId: string): boolean {
   return sessionToRoom.has(sessionId)
 }
 
+// look up the session entry for a room
+export function getSessionForRoom(roomId: string): RoomSession | undefined {
+  return roomSessions.get(roomId)
+}
+
+// list all active room-session mappings
+export function listRoomSessions(): RoomSession[] {
+  return Array.from(roomSessions.values())
+}
+
 // send a message to an opencode session and return the response parts.
 // uses synchronous prompt() to await the LLM response.
 export async function promptSession(

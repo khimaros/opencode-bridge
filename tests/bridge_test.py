@@ -251,6 +251,18 @@ console.log(JSON.stringify({
     { type: 'text', text: 'answer' },
   ], configWithReasoning),
   truncated: formatOutgoingParts([{ type: 'text', text: 'a'.repeat(50) }], configShort),
+  system_reminder_stripped: formatOutgoingParts([
+    { type: 'text', text: 'hello <system-reminder>secret stuff</system-reminder> world' },
+  ], config),
+  system_reminder_only: formatOutgoingParts([
+    { type: 'text', text: '<system-reminder>secret stuff</system-reminder>' },
+  ], config),
+  system_reminder_multiline: formatOutgoingParts([
+    { type: 'text', text: '<system-reminder>\\nline1\\nline2\\n</system-reminder>' },
+  ], config),
+  system_reminder_multiple: formatOutgoingParts([
+    { type: 'text', text: '<system-reminder>a</system-reminder> mid <system-reminder>b</system-reminder>' },
+  ], config),
 }));
 """)
 if err:
@@ -269,6 +281,18 @@ else:
           "thinking" in (result["reasoning_shown"] or ""))
     check("formatOutgoingParts: truncated",
           result["truncated"] is not None and result["truncated"].endswith("...(truncated)"))
+    check("formatOutgoingParts: system-reminder stripped",
+          result["system_reminder_stripped"] == "hello  world",
+          f"got: {result['system_reminder_stripped']!r}")
+    check("formatOutgoingParts: system-reminder only returns null",
+          result["system_reminder_only"] is None,
+          f"got: {result['system_reminder_only']!r}")
+    check("formatOutgoingParts: multiline system-reminder stripped",
+          result["system_reminder_multiline"] is None,
+          f"got: {result['system_reminder_multiline']!r}")
+    check("formatOutgoingParts: multiple system-reminders stripped",
+          result["system_reminder_multiple"] == "mid",
+          f"got: {result['system_reminder_multiple']!r}")
 
 # --- format: formatSystemPromptAddendum ---
 

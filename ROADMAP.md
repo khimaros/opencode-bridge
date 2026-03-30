@@ -2,6 +2,7 @@
 
 ## in progress
 
+- [x] strip system-reminder tags from outgoing messages to matrix
 - [ ] configurable system prompt for bridged sessions with formatting guidance default
 - [x] persist model to state/bridge.json when not explicitly configured
 - [x] env var overrides for bridge config (BRIDGE_* prefix)

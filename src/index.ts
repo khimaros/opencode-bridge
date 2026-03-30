@@ -1,4 +1,5 @@
 import type { Plugin } from '@opencode-ai/plugin'
+import { tool } from '@opencode-ai/plugin'
 import { createOpencodeClient } from '@opencode-ai/sdk'
 import { loadConfig, validateConfig, WORKSPACE } from './config.js'
 import {
@@ -6,7 +7,7 @@ import {
 } from './matrix.js'
 import {
   loadBridgeState, getSyncToken, setSyncToken,
-  getOrCreateSession, getRoomForSession,
+  getOrCreateSession, getRoomForSession, listRoomSessions,
   isBridgedSession, promptSession, shouldCleanup, performCleanup,
   enqueueForRoom, clearRoomMapping, loadModel, persistModel,
 } from './session.js'
@@ -14,7 +15,6 @@ import {
   formatIncomingMessage, formatOutgoingParts, formatSystemPromptAddendum,
   formatCompactionContext, isBotMentioned, stripBotMention,
 } from './format.js'
-import type { Part } from './types.js'
 import { LOG_PREFIX } from './types.js'
 
 function debug(msg: string) {
@@ -154,26 +154,88 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
     }
   })
 
+  // persist an outbound message to session history without triggering the LLM
+  async function persistOutbound(sessionId: string, message: string) {
+    const wrapped = `<system-reminder>\n<assistant-sent-message>${message}</assistant-sent-message>\n</system-reminder>`
+    await client.session.prompt({
+      path: { id: sessionId },
+      body: {
+        noReply: true,
+        agent: CONFIG.agent,
+        parts: [{ type: 'text', text: wrapped, synthetic: true }],
+      },
+    })
+  }
+
+  const homeserverDomain = matrixClient.getHomeserverDomain()
+  debug(`homeserver domain: ${homeserverDomain}`)
+
+  const bridgeTools = {
+    bridge_send: tool({
+      description: 'send a message to a bridged matrix room by room ID',
+      args: {
+        room_id: tool.schema.string().describe('matrix room ID'),
+        message: tool.schema.string().describe('message text to send'),
+      },
+      async execute({ room_id, message }) {
+        const sessionId = await getOrCreateSession(client, room_id, `matrix: ${room_id}`, WORKSPACE)
+        await persistOutbound(sessionId, message)
+        await matrixClient.sendText(room_id, message)
+        return `sent to ${room_id}`
+      },
+    }),
+
+    bridge_send_direct: tool({
+      description: 'send a direct message to a matrix user by username (e.g. "xuananh")',
+      args: {
+        username: tool.schema.string().describe('matrix username (without @ or :server)'),
+        message: tool.schema.string().describe('message text to send'),
+      },
+      async execute({ username, message }) {
+        const userId = `@${username}:${homeserverDomain}`
+        const roomId = await matrixClient.findOrCreateDmRoom(userId)
+        const sessionId = await getOrCreateSession(client, roomId, `matrix: ${roomId}`, WORKSPACE)
+        await persistOutbound(sessionId, message)
+        await matrixClient.sendText(roomId, message)
+        return `sent DM to ${username}`
+      },
+    }),
+
+    bridge_rooms: tool({
+      description: 'list active bridged matrix rooms with members and DM status',
+      args: {},
+      async execute() {
+        const rooms = listRoomSessions()
+        const directRooms = await matrixClient.getDirectRooms()
+        const result = await Promise.all(rooms.map(async (r) => {
+          const members = await getRoomMembers(matrixClient, r.roomId, botUserId)
+          return {
+            roomId: r.roomId,
+            sessionId: r.sessionId,
+            title: r.title,
+            isDm: directRooms.has(r.roomId),
+            members,
+          }
+        }))
+        return JSON.stringify(result)
+      },
+    }),
+  }
+
+  debug(`registering ${Object.keys(bridgeTools).length} tool(s): ${Object.keys(bridgeTools).join(', ')}`)
+
   return {
-    // relay opencode responses to matrix for bridged sessions
+    tool: bridgeTools,
+
+    // track model from assistant responses for bridged sessions
     'chat.message': async (input, output) => {
       try {
         if (input.model) {
           persistModel(input.model, WORKSPACE)
           if (!CONFIG.model) lastModel = input.model
         }
-
-        const roomId = getRoomForSession(input.sessionID)
-        if (!roomId) return // not a bridged session
-
-        const parts: Part[] = output?.parts || []
-        const response = formatOutgoingParts(parts, CONFIG)
-        if (response) {
-          const hasToolCalls = parts.some((p: any) => p.type === 'tool')
-          if (hasToolCalls) return // tool responses are intermediate, skip
-        }
       } catch (e: any) {
-        debug(`chat.message relay failed: ${e.message}`)
+        debug(`chat.message hook failed: ${e.message}`)
       }
     },
 

@@ -47,7 +47,8 @@ export function formatOutgoingParts(parts: Part[], config: BridgeConfig): string
 
   for (const part of parts) {
     if (part.type === 'text') {
-      sections.push(part.text)
+      const cleaned = stripSystemReminders(part.text)
+      if (cleaned) sections.push(cleaned)
     } else if (part.type === 'tool' && config.display_tool_calls) {
       sections.push(formatToolCall(part as { type: 'tool'; tool: string; state: string }))
     } else if (part.type === 'reasoning' && config.display_reasoning) {
@@ -65,6 +66,11 @@ export function formatOutgoingParts(parts: Part[], config: BridgeConfig): string
   return text
 }
 
+// remove <system-reminder> blocks injected by the LLM harness
+function stripSystemReminders(text: string): string {
+  return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim()
+}
+
 function formatToolCall(part: { tool: string; state: string }): string {
   return `[tool: ${part.tool} (${part.state})]`
 }
@@ -78,6 +84,7 @@ export function formatSystemPromptAddendum(roomId: string, members: string[], is
   if (members.length > 0) {
     lines.push(`participants: ${members.join(', ')}`)
   }
+  lines.push('messages wrapped in <assistant-sent-message> MUST be treated as messages that YOU SENT TO THE USER from another session. ALWAYS treat them as YOUR OWN PRIOR MESSAGES and resume the conversation as though that were your most recently sent message.')
   if (!isDm && config.system_prompt) {
     lines.push('')
     lines.push(config.system_prompt)
