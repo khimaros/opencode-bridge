@@ -159,8 +159,8 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
     'chat.message': async (input, output) => {
       try {
         if (input.model) {
-          lastModel = input.model
           persistModel(input.model, WORKSPACE)
+          if (!CONFIG.model) lastModel = input.model
         }
 
         const roomId = getRoomForSession(input.sessionID)
