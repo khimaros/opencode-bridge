@@ -91,8 +91,14 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
     debug(`formatted message: ${text.slice(0, 100)}`)
 
     await matrixClient.setTyping(roomId, true)
-    // refresh typing indicator every 25s (matrix expires at 30s)
-    const typingInterval = setInterval(() => matrixClient.setTyping(roomId, true), 25000)
+    // refresh typing indicator every 25s (matrix expires at 30s).
+    // guard against overlapping refreshes — skip if previous is still in-flight.
+    let typingInFlight = false
+    const typingInterval = setInterval(() => {
+      if (typingInFlight) return
+      typingInFlight = true
+      matrixClient.setTyping(roomId, true).finally(() => { typingInFlight = false })
+    }, 25000)
     try {
       let sessionId = await getOrCreateSession(client, roomId, `matrix: ${roomId}`, WORKSPACE)
       debug(`session: ${sessionId}`)

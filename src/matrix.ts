@@ -95,7 +95,7 @@ export class MatrixClient {
     await this.api('PUT',
       `/rooms/${encodeURIComponent(roomId)}/typing/${encodeURIComponent(this.getUserId())}`,
       body,
-    ).catch(() => {}) // best-effort
+    ).catch((e: any) => debug(`setTyping(${typing}) failed for ${roomId}: ${e.message}`))
   }
 
   async joinRoom(roomId: string) {
