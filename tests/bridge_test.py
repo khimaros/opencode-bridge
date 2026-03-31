@@ -695,6 +695,53 @@ else:
     check("shouldCleanup msg: suppressed after cleanup",
           not result["after"], f"got: {result['after']}")
 
+# --- session: resetRetryNotified / markRetryNotified ---
+
+result, err = run_node("""
+import { resetRetryNotified, markRetryNotified } from './dist/session.js';
+
+const roomId = '!retry:test';
+
+// first mark without reset should still work (default not-notified)
+const first = markRetryNotified(roomId);
+const second = markRetryNotified(roomId);
+
+// reset and mark again
+resetRetryNotified(roomId);
+const afterReset = markRetryNotified(roomId);
+const afterResetAgain = markRetryNotified(roomId);
+
+console.log(JSON.stringify({ first, second, afterReset, afterResetAgain }));
+""")
+if err:
+    check("retryNotified (build required)", False, err.strip())
+else:
+    check("markRetryNotified: first call returns true", result["first"])
+    check("markRetryNotified: second call returns false", not result["second"])
+    check("markRetryNotified: after reset returns true", result["afterReset"])
+    check("markRetryNotified: after reset second returns false",
+          not result["afterResetAgain"])
+
+# --- session: markRetryNotified isolation between rooms ---
+
+result, err = run_node("""
+import { resetRetryNotified, markRetryNotified } from './dist/session.js';
+
+resetRetryNotified('!roomA:test');
+resetRetryNotified('!roomB:test');
+const a1 = markRetryNotified('!roomA:test');
+const b1 = markRetryNotified('!roomB:test');
+const a2 = markRetryNotified('!roomA:test');
+
+console.log(JSON.stringify({ a1, b1, a2 }));
+""")
+if err:
+    check("retryNotified room isolation (build required)", False, err.strip())
+else:
+    check("retryNotified: room A first is true", result["a1"])
+    check("retryNotified: room B first is true (independent)", result["b1"])
+    check("retryNotified: room A second is false", not result["a2"])
+
 # --- summary ---
 
 total = PASS + FAIL

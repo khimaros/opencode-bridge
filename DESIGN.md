@@ -47,3 +47,17 @@ the bridge composes with other plugins by only appending to shared state:
 
 follows the opencode-evolve pattern with configurable modes (none, compact,
 new, archive) triggered by token or message count thresholds.
+
+a `[compacting context]` notice is sent to the room before cleanup runs.
+
+## status notifications
+
+the bridge subscribes to opencode SSE events (`/event` endpoint) to
+monitor session status in real time, even while a prompt is in flight.
+
+- **retry**: when opencode retries an LLM request (rate limit, overload),
+  a `[retrying: <reason>]` notice is sent to the room once per prompt.
+  a per-room flag (`retryNotified`) resets at the start of each prompt
+  to avoid spamming on multiple retries.
+- **compaction**: a `session.compacted` SSE event is logged when opencode
+  finishes compaction (the user-facing notice is sent before cleanup starts).

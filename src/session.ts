@@ -25,6 +25,9 @@ const sessionToRoom = new Map<string, string>()
 // per-room promise chain to serialize concurrent messages
 const roomQueues = new Map<string, Promise<void>>()
 
+// per-room flag: true once a retry notice has been sent for the current prompt
+const retryNotified = new Map<string, boolean>()
+
 function statePath(workspace: string): string {
   return path.join(workspace, 'state', 'bridge.json')
 }
@@ -270,6 +273,56 @@ export async function performCleanup(
   persistState(workspace)
   debug(`cleanup: rotated ${sessionId} -> ${newId} (${config.cleanup})`)
   return { newSessionId: newId, action: config.cleanup }
+}
+
+// mark a room as eligible for retry notifications (call at prompt start)
+export function resetRetryNotified(roomId: string) {
+  retryNotified.set(roomId, false)
+}
+
+// mark a room as having been notified about a retry (returns true if this is the first call)
+export function markRetryNotified(roomId: string): boolean {
+  if (retryNotified.get(roomId)) return false
+  retryNotified.set(roomId, true)
+  return true
+}
+
+// subscribe to opencode SSE events, dispatching retry and compaction events
+// for bridged sessions to the provided callbacks.
+export async function startEventSubscription(
+  client: any,
+  onRetry: (roomId: string, message: string) => void,
+  onCompacted: (roomId: string) => void,
+) {
+  try {
+    const result = await client.event.subscribe()
+    const stream = result.stream
+    if (!stream) {
+      debug('SSE subscription returned no stream')
+      return
+    }
+    debug('SSE event subscription started')
+    ;(async () => {
+      try {
+        for await (const event of stream) {
+          const e = event as any
+          if (e.type === 'session.status' && e.properties?.status?.type === 'retry') {
+            const roomId = getRoomForSession(e.properties.sessionID)
+            if (roomId && markRetryNotified(roomId)) {
+              onRetry(roomId, e.properties.status.message)
+            }
+          } else if (e.type === 'session.compacted') {
+            const roomId = getRoomForSession(e.properties?.sessionID)
+            if (roomId) onCompacted(roomId)
+          }
+        }
+      } catch (err: any) {
+        debug(`SSE stream error: ${err.message}`)
+      }
+    })()
+  } catch (err: any) {
+    debug(`SSE subscription failed: ${err.message}`)
+  }
 }
 
 // enqueue a task for a room, serializing with any in-flight work.

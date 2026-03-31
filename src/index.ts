@@ -10,6 +10,7 @@ import {
   getOrCreateSession, getRoomForSession, listRoomSessions,
   isBridgedSession, promptSession, shouldCleanup, performCleanup,
   enqueueForRoom, clearRoomMapping, loadModel, persistModel,
+  resetRetryNotified, startEventSubscription,
 } from './session.js'
 import {
   formatIncomingMessage, formatOutgoingParts, formatSystemPromptAddendum,
@@ -91,6 +92,7 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
     debug(`formatted message: ${text.slice(0, 100)}`)
 
     await matrixClient.setTyping(roomId, true)
+    resetRetryNotified(roomId)
     // refresh typing indicator every 25s (matrix expires at 30s).
     // guard against overlapping refreshes — skip if previous is still in-flight.
     let typingInFlight = false
@@ -132,6 +134,7 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
 
       // check cleanup after each prompt
       if (await shouldCleanup(client, sessionId, CONFIG)) {
+        await matrixClient.sendNotice(roomId, '[compacting context]').catch(() => {})
         const { action } = await performCleanup(
           client, sessionId, roomId, CONFIG, WORKSPACE, lastModel,
         )
@@ -159,6 +162,18 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
       )
     }
   })
+
+  // subscribe to opencode SSE events for retry/compaction notifications
+  startEventSubscription(
+    client,
+    (roomId, message) => {
+      debug(`retry notice for room ${roomId}: ${message}`)
+      matrixClient.sendNotice(roomId, `[retrying: ${message}]`).catch(() => {})
+    },
+    (roomId) => {
+      debug(`compaction complete for room ${roomId}`)
+    },
+  )
 
   // persist an outbound message to session history without triggering the LLM
   async function persistOutbound(sessionId: string, message: string) {
