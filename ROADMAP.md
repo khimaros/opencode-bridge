@@ -2,6 +2,8 @@
 
 ## in progress
 
+- [ ] send each assistant text part as a separate matrix message (not just the last)
+
 - [x] strip system-reminder tags from outgoing messages to matrix
 - [ ] configurable system prompt for bridged sessions with formatting guidance default
 - [x] persist model to state/bridge.json when not explicitly configured

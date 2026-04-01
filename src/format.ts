@@ -41,29 +41,50 @@ export function isNoResponse(text: string): boolean {
 }
 
 // extract and format the outgoing response from opencode parts for matrix.
-// returns null if the response is a no-response signal.
-export function formatOutgoingParts(parts: Part[], config: BridgeConfig): string | null {
-  const sections: string[] = []
+// when send_intermediate_text is enabled, each assistant text part becomes a
+// separate message; non-text parts attach to the nearest text message.
+// when disabled (default), all parts are joined into a single message.
+export function formatOutgoingParts(parts: Part[], config: BridgeConfig): string[] {
+  const messages: string[] = []
+  let prefix: string[] = [] // non-text parts before the first text
+
+  function appendNonText(line: string) {
+    if (config.send_intermediate_text && messages.length > 0) {
+      messages[messages.length - 1] += '\n' + line
+    } else {
+      prefix.push(line)
+    }
+  }
 
   for (const part of parts) {
     if (part.type === 'text') {
       const cleaned = stripSystemReminders(part.text)
-      if (cleaned) sections.push(cleaned)
+      if (!cleaned || isNoResponse(cleaned)) continue
+      if (config.send_intermediate_text && prefix.length > 0) {
+        messages.push([...prefix, cleaned].join('\n').trim())
+        prefix = []
+      } else if (config.send_intermediate_text) {
+        messages.push(cleaned)
+      } else {
+        prefix.push(cleaned)
+      }
     } else if (part.type === 'tool' && config.display_tool_calls) {
-      sections.push(formatToolCall(part as { type: 'tool'; tool: string; state: string }))
+      appendNonText(formatToolCall(part as { type: 'tool'; tool: string; state: string }))
     } else if (part.type === 'reasoning' && config.display_reasoning) {
-      sections.push(`> ${part.text}`)
+      appendNonText(`> ${part.text}`)
     }
   }
 
-  const text = sections.join('\n').trim()
-  if (!text) return null
-  if (isNoResponse(text)) return null
+  // flush remaining sections
+  const tail = prefix.join('\n').trim()
+  if (tail) messages.push(tail)
 
-  if (text.length > config.max_response_length) {
-    return text.slice(0, config.max_response_length) + '\n...(truncated)'
-  }
-  return text
+  return messages.map(msg => {
+    if (msg.length > config.max_response_length) {
+      return msg.slice(0, config.max_response_length) + '\n...(truncated)'
+    }
+    return msg
+  })
 }
 
 // remove <system-reminder> blocks injected by the LLM harness

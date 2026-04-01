@@ -229,6 +229,8 @@ const config = { ...DEFAULTS };
 const configWithTools = { ...DEFAULTS, display_tool_calls: true };
 const configWithReasoning = { ...DEFAULTS, display_reasoning: true };
 const configShort = { ...DEFAULTS, max_response_length: 20 };
+const configSplit = { ...DEFAULTS, send_intermediate_text: true };
+const configSplitTools = { ...DEFAULTS, send_intermediate_text: true, display_tool_calls: true };
 
 console.log(JSON.stringify({
   text_only: formatOutgoingParts([{ type: 'text', text: 'hello' }], config),
@@ -263,36 +265,83 @@ console.log(JSON.stringify({
   system_reminder_multiple: formatOutgoingParts([
     { type: 'text', text: '<system-reminder>a</system-reminder> mid <system-reminder>b</system-reminder>' },
   ], config),
+  // default (send_intermediate_text=false): multiple text parts joined into one message
+  multi_text_joined: formatOutgoingParts([
+    { type: 'text', text: 'first message' },
+    { type: 'tool', tool: 'bash', state: 'completed' },
+    { type: 'text', text: 'second message' },
+  ], config),
+  // send_intermediate_text=true: each text part is a separate message
+  multi_text_split: formatOutgoingParts([
+    { type: 'text', text: 'first message' },
+    { type: 'tool', tool: 'bash', state: 'completed' },
+    { type: 'text', text: 'second message' },
+  ], configSplit),
+  multi_text_split_with_tools: formatOutgoingParts([
+    { type: 'text', text: 'first' },
+    { type: 'tool', tool: 'bash', state: 'completed' },
+    { type: 'text', text: 'second' },
+  ], configSplitTools),
+  multi_text_split_no_response: formatOutgoingParts([
+    { type: 'text', text: '[NO_RESPONSE]' },
+    { type: 'text', text: 'real answer' },
+  ], configSplit),
 }));
 """)
 if err:
     check("formatOutgoingParts (build required)", False, err.strip())
 else:
-    check("formatOutgoingParts: text only", result["text_only"] == "hello")
-    check("formatOutgoingParts: no-response returns null", result["no_response"] is None)
-    check("formatOutgoingParts: empty returns null", result["empty_parts"] is None)
+    # returns string[] — single text part returns array with one element
+    check("formatOutgoingParts: text only", result["text_only"] == ["hello"],
+          f"got: {result['text_only']!r}")
+    check("formatOutgoingParts: no-response returns empty", result["no_response"] == [],
+          f"got: {result['no_response']!r}")
+    check("formatOutgoingParts: empty returns empty", result["empty_parts"] == [],
+          f"got: {result['empty_parts']!r}")
     check("formatOutgoingParts: tool hidden by default",
-          "tool" not in (result["tool_hidden"] or "").lower() and result["tool_hidden"] == "result")
+          result["tool_hidden"] == ["result"],
+          f"got: {result['tool_hidden']!r}")
     check("formatOutgoingParts: tool shown when enabled",
-          "bash" in (result["tool_shown"] or ""))
+          len(result["tool_shown"]) == 1 and "bash" in result["tool_shown"][0],
+          f"got: {result['tool_shown']!r}")
     check("formatOutgoingParts: reasoning hidden by default",
-          "thinking" not in (result["reasoning_hidden"] or "") and result["reasoning_hidden"] == "answer")
+          result["reasoning_hidden"] == ["answer"],
+          f"got: {result['reasoning_hidden']!r}")
     check("formatOutgoingParts: reasoning shown when enabled",
-          "thinking" in (result["reasoning_shown"] or ""))
+          len(result["reasoning_shown"]) == 1 and "thinking" in result["reasoning_shown"][0],
+          f"got: {result['reasoning_shown']!r}")
     check("formatOutgoingParts: truncated",
-          result["truncated"] is not None and result["truncated"].endswith("...(truncated)"))
+          len(result["truncated"]) == 1 and result["truncated"][0].endswith("...(truncated)"),
+          f"got: {result['truncated']!r}")
     check("formatOutgoingParts: system-reminder stripped",
-          result["system_reminder_stripped"] == "hello  world",
+          result["system_reminder_stripped"] == ["hello  world"],
           f"got: {result['system_reminder_stripped']!r}")
-    check("formatOutgoingParts: system-reminder only returns null",
-          result["system_reminder_only"] is None,
+    check("formatOutgoingParts: system-reminder only returns empty",
+          result["system_reminder_only"] == [],
           f"got: {result['system_reminder_only']!r}")
     check("formatOutgoingParts: multiline system-reminder stripped",
-          result["system_reminder_multiline"] is None,
+          result["system_reminder_multiline"] == [],
           f"got: {result['system_reminder_multiline']!r}")
     check("formatOutgoingParts: multiple system-reminders stripped",
-          result["system_reminder_multiple"] == "mid",
+          result["system_reminder_multiple"] == ["mid"],
           f"got: {result['system_reminder_multiple']!r}")
+    # default: multiple text parts joined into one message
+    check("formatOutgoingParts: multi text joined by default",
+          result["multi_text_joined"] == ["first message\nsecond message"],
+          f"got: {result['multi_text_joined']!r}")
+    # send_intermediate_text=true: each text part is a separate message
+    check("formatOutgoingParts: multi text split when enabled",
+          result["multi_text_split"] == ["first message", "second message"],
+          f"got: {result['multi_text_split']!r}")
+    check("formatOutgoingParts: split with tools groups tool with preceding text",
+          len(result["multi_text_split_with_tools"]) == 2
+          and "first" in result["multi_text_split_with_tools"][0]
+          and "bash" in result["multi_text_split_with_tools"][0]
+          and result["multi_text_split_with_tools"][1] == "second",
+          f"got: {result['multi_text_split_with_tools']!r}")
+    check("formatOutgoingParts: split skips no-response, keeps real text",
+          result["multi_text_split_no_response"] == ["real answer"],
+          f"got: {result['multi_text_split_no_response']!r}")
 
 # --- format: formatSystemPromptAddendum ---
 

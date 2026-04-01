@@ -123,13 +123,15 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
       debug(`prompting session ${sessionId}`)
       const parts = await promptSession(client, sessionId, text, CONFIG, lastModel)
       debug(`got ${parts.length} response part(s)`)
-      const response = formatOutgoingParts(parts, CONFIG)
+      const messages = formatOutgoingParts(parts, CONFIG)
 
-      if (response) {
-        debug(`sending response to matrix (${response.length} chars)`)
-        await matrixClient.sendText(roomId, response)
+      if (messages.length > 0) {
+        debug(`sending ${messages.length} message(s) to matrix`)
+        for (const msg of messages) {
+          await matrixClient.sendText(roomId, msg)
+        }
       } else {
-        debug(`no response to send (null/NO_RESPONSE)`)
+        debug(`no response to send (empty/NO_RESPONSE)`)
       }
 
       // check cleanup after each prompt
