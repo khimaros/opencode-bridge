@@ -113,6 +113,15 @@ export function formatSystemPromptAddendum(roomId: string, members: string[], is
   return lines.join('\n')
 }
 
+// check if a matrix message is a permission reply (allow/deny)
+export function parsePermissionReply(body: string): 'once' | 'always' | 'reject' | null {
+  const lower = body.trim().toLowerCase()
+  if (lower === 'allow') return 'once'
+  if (lower === 'allow always') return 'always'
+  if (lower === 'deny') return 'reject'
+  return null
+}
+
 // generate compaction context for bridged sessions
 export function formatCompactionContext(roomId: string, members: string[]): string {
   const lines = [

@@ -343,6 +343,77 @@ else:
           result["multi_text_split_no_response"] == ["real answer"],
           f"got: {result['multi_text_split_no_response']!r}")
 
+# --- format: parsePermissionReply ---
+
+result, err = run_node("""
+import { parsePermissionReply } from './dist/format.js';
+console.log(JSON.stringify({
+  allow: parsePermissionReply('allow'),
+  allow_caps: parsePermissionReply('Allow'),
+  allow_always: parsePermissionReply('allow always'),
+  deny: parsePermissionReply('deny'),
+  deny_caps: parsePermissionReply('Deny'),
+  other: parsePermissionReply('hello'),
+  empty: parsePermissionReply(''),
+  whitespace: parsePermissionReply('  allow  '),
+}));
+""")
+if err:
+    check("parsePermissionReply (build required)", False, err.strip())
+else:
+    check("parsePermissionReply: allow", result["allow"] == "once")
+    check("parsePermissionReply: allow caps", result["allow_caps"] == "once")
+    check("parsePermissionReply: allow always", result["allow_always"] == "always")
+    check("parsePermissionReply: deny", result["deny"] == "reject")
+    check("parsePermissionReply: deny caps", result["deny_caps"] == "reject")
+    check("parsePermissionReply: other returns null", result["other"] is None)
+    check("parsePermissionReply: empty returns null", result["empty"] is None)
+    check("parsePermissionReply: whitespace trimmed", result["whitespace"] == "once")
+
+# --- session: pending permission tracking ---
+
+result, err = run_node("""
+import { awaitPermissionReply, resolvePendingPermission, hasPendingPermission } from './dist/session.js';
+
+// initially no pending
+const noPending = hasPendingPermission('!room:test');
+
+// awaitPermissionReply creates a pending entry; resolve it from another "thread"
+const promise = awaitPermissionReply('!room:test', 'sess1', 'perm1', 'run bash');
+const hasPending = hasPendingPermission('!room:test');
+
+// resolve and await the result
+const resolved = resolvePendingPermission('!room:test', 'allow');
+const response = await promise;
+const afterResolve = hasPendingPermission('!room:test');
+
+// resolve returns false when nothing is pending
+const noopResolve = resolvePendingPermission('!room:test', 'deny');
+
+// isolation between rooms
+const promiseA = awaitPermissionReply('!roomA:test', 'sessA', 'permA', 'read');
+const promiseB = awaitPermissionReply('!roomB:test', 'sessB', 'permB', 'write');
+resolvePendingPermission('!roomA:test', 'allow');
+resolvePendingPermission('!roomB:test', 'deny');
+const respA = await promiseA;
+const respB = await promiseB;
+
+console.log(JSON.stringify({
+  noPending, hasPending, resolved, response, afterResolve, noopResolve, respA, respB,
+}));
+""")
+if err:
+    check("pendingPermission (build required)", False, err.strip())
+else:
+    check("hasPendingPermission: empty initially", not result["noPending"])
+    check("hasPendingPermission: true after await", result["hasPending"])
+    check("resolvePendingPermission: returns true", result["resolved"])
+    check("awaitPermissionReply: resolves with response", result["response"] == "allow")
+    check("hasPendingPermission: false after resolve", not result["afterResolve"])
+    check("resolvePendingPermission: noop returns false", not result["noopResolve"])
+    check("pendingPermission: room A isolated", result["respA"] == "allow")
+    check("pendingPermission: room B isolated", result["respB"] == "deny")
+
 # --- format: formatSystemPromptAddendum ---
 
 result, err = run_node("""
@@ -498,6 +569,7 @@ console.log(JSON.stringify(config));
 """, env_override={
         "BRIDGE_DEFAULT_TRIGGER": "all",
         "BRIDGE_CLEANUP": "compact",
+        "BRIDGE_PERMISSION_USERS": "pawalls,alice",
     })
     if err:
         check("env trigger/cleanup (build required)", False, err.strip())
@@ -506,6 +578,9 @@ console.log(JSON.stringify(config));
               f"got: {result['default_trigger']}")
         check("env override: cleanup", result["cleanup"] == "compact",
               f"got: {result['cleanup']}")
+        check("env override: permission_users parsed as array",
+              result["permission_users"] == ["pawalls", "alice"],
+              f"got: {result['permission_users']!r}")
 finally:
     shutil.rmtree(tmp)
 
@@ -583,6 +658,81 @@ console.log(JSON.stringify({{ model }}));
         check("loadModel: loads from persisted state",
               result["model"] == {"providerID": "anthropic", "modelID": "claude-sonnet-4-5"},
               f"got: {result['model']}")
+finally:
+    shutil.rmtree(tmp)
+
+# --- session: username persistence ---
+
+tmp = tempfile.mkdtemp()
+try:
+    result, err = run_node(f"""
+import {{ loadBridgeState, loadUsername, persistUsername }} from './dist/session.js';
+loadBridgeState({json.dumps(tmp)});
+
+// initially no username
+const before = loadUsername();
+
+// persist a username
+persistUsername('mybot', {json.dumps(tmp)});
+const after = loadUsername();
+
+// persist same username again (should be a no-op)
+persistUsername('mybot', {json.dumps(tmp)});
+const afterSame = loadUsername();
+
+// persist different username
+persistUsername('otherbot', {json.dumps(tmp)});
+const afterDiff = loadUsername();
+
+console.log(JSON.stringify({{ before, after, afterSame, afterDiff }}));
+""")
+    if err:
+        check("username persistence (build required)", False, err.strip())
+    else:
+        check("loadUsername: initially null", result["before"] is None)
+        check("persistUsername: stores username", result["after"] == "mybot")
+        check("persistUsername: idempotent", result["afterSame"] == "mybot")
+        check("persistUsername: updates on change", result["afterDiff"] == "otherbot")
+
+    # verify state file on disk has username
+    state_file = os.path.join(tmp, "state", "bridge.json")
+    if os.path.exists(state_file):
+        with open(state_file) as f:
+            state = json.load(f)
+        check("state file: has username field",
+              state.get("username") == "otherbot",
+              f"got: {state.get('username')}")
+    else:
+        check("state file: exists", False, "state/bridge.json not found")
+finally:
+    shutil.rmtree(tmp)
+
+# --- session: username loaded from state on startup ---
+
+tmp = tempfile.mkdtemp()
+try:
+    os.makedirs(os.path.join(tmp, "state"))
+    state = {
+        "rooms": [],
+        "sync_token": None,
+        "model": None,
+        "username": "savedbot",
+    }
+    with open(os.path.join(tmp, "state", "bridge.json"), "w") as f:
+        json.dump(state, f)
+
+    result, err = run_node(f"""
+import {{ loadBridgeState, loadUsername }} from './dist/session.js';
+loadBridgeState({json.dumps(tmp)});
+const username = loadUsername();
+console.log(JSON.stringify({{ username }}));
+""")
+    if err:
+        check("username from state on startup (build required)", False, err.strip())
+    else:
+        check("loadUsername: loads from persisted state",
+              result["username"] == "savedbot",
+              f"got: {result['username']}")
 finally:
     shutil.rmtree(tmp)
 

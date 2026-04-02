@@ -9,6 +9,7 @@ export interface BridgeConfig {
   display_tool_calls: boolean
   display_reasoning: boolean
   send_intermediate_text: boolean
+  permission_users: string[]
   max_response_length: number
   agent: string
   sync_timeout_ms: number
@@ -32,6 +33,7 @@ export const DEFAULTS: BridgeConfig = {
   display_tool_calls: false,
   display_reasoning: false,
   send_intermediate_text: false,
+  permission_users: [],
   max_response_length: 4000,
   agent: 'per',
   sync_timeout_ms: 30000,

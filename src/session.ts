@@ -28,6 +28,16 @@ const roomQueues = new Map<string, Promise<void>>()
 // per-room flag: true once a retry notice has been sent for the current prompt
 const retryNotified = new Map<string, boolean>()
 
+// pending permission requests awaiting matrix user reply.
+// the hook awaits the promise; matrix message handler resolves it.
+export interface PendingPermission {
+  sessionId: string
+  permissionId: string
+  title: string
+  resolve: (response: 'allow' | 'deny') => void
+}
+const pendingPermissions = new Map<string, PendingPermission>()
+
 function statePath(workspace: string): string {
   return path.join(workspace, 'state', 'bridge.json')
 }
@@ -37,13 +47,14 @@ interface BridgeState {
   rooms: RoomSession[]
   sync_token: string | null
   model: { providerID: string; modelID: string } | null
+  username: string | null
 }
 
 function loadState(workspace: string): BridgeState {
   try {
     return JSON.parse(readFileSync(statePath(workspace), 'utf-8'))
   } catch {
-    return { rooms: [], sync_token: null, model: null }
+    return { rooms: [], sync_token: null, model: null, username: null }
   }
 }
 
@@ -54,6 +65,7 @@ function persistState(workspace: string) {
       rooms: Array.from(roomSessions.values()),
       sync_token: currentSyncToken,
       model: currentModel,
+      username: currentUsername,
     }
     writeFileSync(statePath(workspace), JSON.stringify(state, null, 2) + '\n')
   } catch (e: any) {
@@ -63,6 +75,7 @@ function persistState(workspace: string) {
 
 let currentSyncToken: string | null = null
 let currentModel: { providerID: string; modelID: string } | null = null
+let currentUsername: string | null = null
 
 // load all persisted state from disk
 export function loadBridgeState(workspace: string) {
@@ -73,6 +86,7 @@ export function loadBridgeState(workspace: string) {
   }
   currentSyncToken = state.sync_token
   currentModel = state.model || null
+  currentUsername = state.username || null
   debug(`loaded ${roomSessions.size} room mapping(s)`)
 }
 
@@ -86,6 +100,18 @@ export function persistModel(model: { providerID: string; modelID: string }, wor
   currentModel = model
   persistState(workspace)
   debug(`persisted model: ${model.providerID}/${model.modelID}`)
+}
+
+// username accessors — localpart of the bot's matrix user ID
+export function loadUsername(): string | null {
+  return currentUsername
+}
+
+export function persistUsername(username: string, workspace: string) {
+  if (currentUsername === username) return
+  currentUsername = username
+  persistState(workspace)
+  debug(`persisted username: ${username}`)
 }
 
 // sync token accessors for the matrix client
@@ -287,12 +313,51 @@ export function markRetryNotified(roomId: string): boolean {
   return true
 }
 
+// create a pending permission for a room and return a promise that resolves
+// when a matrix user replies with allow/deny.
+export function awaitPermissionReply(
+  roomId: string, sessionId: string, permissionId: string, title: string,
+): Promise<'allow' | 'deny'> {
+  return new Promise((resolve) => {
+    pendingPermissions.set(roomId, { sessionId, permissionId, title, resolve })
+  })
+}
+
+// resolve a pending permission for a room. returns true if there was one.
+export function resolvePendingPermission(roomId: string, response: 'allow' | 'deny'): boolean {
+  const p = pendingPermissions.get(roomId)
+  if (!p) return false
+  pendingPermissions.delete(roomId)
+  p.resolve(response)
+  return true
+}
+
+// check if a room has a pending permission request
+export function hasPendingPermission(roomId: string): boolean {
+  return pendingPermissions.has(roomId)
+}
+
+// reply to an opencode permission request
+export async function replyPermission(
+  client: any, sessionId: string, permissionId: string,
+  response: 'once' | 'always' | 'reject',
+) {
+  const result = await client.postSessionIdPermissionsPermissionId({
+    path: { id: sessionId, permissionID: permissionId },
+    body: { response },
+  })
+  if (result.error) {
+    debug(`permission reply failed: ${JSON.stringify(result.error)}`)
+  }
+}
+
 // subscribe to opencode SSE events, dispatching retry and compaction events
 // for bridged sessions to the provided callbacks.
 export async function startEventSubscription(
   client: any,
   onRetry: (roomId: string, message: string) => void,
   onCompacted: (roomId: string) => void,
+  onPermission?: (roomId: string, permission: { id: string; sessionID: string; permission: string; patterns: string[] }) => void,
 ) {
   try {
     const result = await client.event.subscribe()
@@ -314,6 +379,10 @@ export async function startEventSubscription(
           } else if (e.type === 'session.compacted') {
             const roomId = getRoomForSession(e.properties?.sessionID)
             if (roomId) onCompacted(roomId)
+          } else if (e.type === 'permission.asked' && onPermission) {
+            const p = e.properties
+            const roomId = getRoomForSession(p?.sessionID)
+            if (roomId) onPermission(roomId, p)
           }
         }
       } catch (err: any) {

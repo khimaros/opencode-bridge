@@ -48,6 +48,7 @@ function coerceEnv(val: string, existing: any): any {
   if (existing === null || typeof existing === 'string') return val === 'null' ? null : val
   if (typeof existing === 'number') return val === 'null' ? null : Number(val)
   if (typeof existing === 'boolean') return val === 'true'
+  if (Array.isArray(existing)) return val ? val.split(',').map(s => s.trim()) : []
   return val
 }
 

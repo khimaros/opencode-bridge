@@ -9,12 +9,15 @@ import {
   loadBridgeState, getSyncToken, setSyncToken,
   getOrCreateSession, getRoomForSession, listRoomSessions,
   isBridgedSession, promptSession, shouldCleanup, performCleanup,
-  enqueueForRoom, clearRoomMapping, loadModel, persistModel,
+  enqueueForRoom, clearRoomMapping, loadModel, persistModel, persistUsername,
   resetRetryNotified, startEventSubscription,
+  awaitPermissionReply, resolvePendingPermission, hasPendingPermission,
+  replyPermission,
 } from './session.js'
 import {
   formatIncomingMessage, formatOutgoingParts, formatSystemPromptAddendum,
   formatCompactionContext, isBotMentioned, stripBotMention,
+  parsePermissionReply,
 } from './format.js'
 import { LOG_PREFIX } from './types.js'
 
@@ -60,6 +63,7 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
       debug(`whoami returned ${botUserId}, config has ${CONFIG.user_id} — using whoami result`)
     }
     matrixClient.setUserId(botUserId)
+    persistUsername(botUserId.replace(/^@/, '').replace(/:.*$/, ''), WORKSPACE)
     botDisplayName = await getBotDisplayName(matrixClient, botUserId)
     debug(`bot: ${botUserId} (${botDisplayName || 'no display name'})`)
   } catch (e: any) {
@@ -73,6 +77,8 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
     roomId: string, sender: string, body: string, isDm: boolean,
   ) {
     debug(`handling message in ${roomId} from ${sender} isDm=${isDm}`)
+    const localpart = sender.replace(/^@/, '').replace(/:.*$/, '')
+
     const triggerMode = getTriggerMode(roomId, CONFIG)
 
     // in mention mode for non-DM rooms, only respond when mentioned
@@ -86,8 +92,6 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
 
     if (!body.trim()) return
 
-    // extract localpart from mxid (e.g. @alice:example.org -> alice)
-    const localpart = sender.replace(/^@/, '').replace(/:.*$/, '')
     const text = formatIncomingMessage(localpart, body)
     debug(`formatted message: ${text.slice(0, 100)}`)
 
@@ -153,6 +157,20 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
 
   // start matrix sync in the background (non-blocking)
   matrixClient.startSync(CONFIG, (msg) => {
+    // intercept permission replies before enqueueing to avoid deadlock
+    // (the room queue is blocked on promptSession which awaits the permission)
+    if (hasPendingPermission(msg.roomId)) {
+      const localpart = msg.sender.replace(/^@/, '').replace(/:.*$/, '')
+      if (CONFIG.permission_users.includes(localpart)) {
+        const permReply = parsePermissionReply(msg.body)
+        if (permReply) {
+          const response = permReply === 'reject' ? 'deny' : 'allow'
+          debug(`permission reply from ${localpart}: ${response} (sync intercept)`)
+          resolvePendingPermission(msg.roomId, response as 'allow' | 'deny')
+          return
+        }
+      }
+    }
     enqueueForRoom(msg.roomId, () =>
       handleMatrixMessage(msg.roomId, msg.sender, msg.body, msg.isDm)
     )
@@ -165,7 +183,7 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
     }
   })
 
-  // subscribe to opencode SSE events for retry/compaction notifications
+  // subscribe to opencode SSE events for retry/compaction/permission notifications
   startEventSubscription(
     client,
     (roomId, message) => {
@@ -175,6 +193,38 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
     (roomId) => {
       debug(`compaction complete for room ${roomId}`)
     },
+    CONFIG.permission_users.length > 0
+      ? async (roomId, perm) => {
+          const label = `${perm.permission} (${perm.patterns.join(', ')})`
+          debug(`permission request for room ${roomId}: ${label}`)
+          // stop typing — the session is paused waiting for permission
+          await matrixClient.setTyping(roomId, false).catch(() => {})
+          let memberIds: string[] = []
+          try {
+            memberIds = await matrixClient.getJoinedMembers(roomId)
+          } catch {}
+          const localparts = memberIds
+            .filter(id => id !== botUserId)
+            .map(id => id.replace(/^@/, '').replace(/:.*$/, ''))
+          debug(`permission: room members=${localparts.join(',')} whitelist=${CONFIG.permission_users.join(',')}`)
+          const allowed = localparts.filter(lp => CONFIG.permission_users.includes(lp))
+          if (allowed.length === 0) {
+            debug(`permission auto-denied (no whitelisted users in room)`)
+            await replyPermission(client, perm.sessionID, perm.id, 'reject')
+            await matrixClient.sendNotice(roomId, `[permission denied: ${label}]`).catch(() => {})
+          } else {
+            const promise = awaitPermissionReply(roomId, perm.sessionID, perm.id, label)
+            await matrixClient.sendNotice(roomId,
+              `[permission request: ${label} — reply "allow" or "deny"]`,
+            ).catch(() => {})
+            const response = await promise
+            const reply = response === 'allow' ? 'once' : 'reject'
+            await replyPermission(client, perm.sessionID, perm.id, reply)
+            const status = response === 'allow' ? 'allowed' : 'denied'
+            await matrixClient.sendNotice(roomId, `[permission ${status}: ${label}]`).catch(() => {})
+          }
+        }
+      : undefined,
   )
 
   // persist an outbound message to session history without triggering the LLM
