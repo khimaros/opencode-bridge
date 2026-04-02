@@ -661,77 +661,79 @@ console.log(JSON.stringify({{ model }}));
 finally:
     shutil.rmtree(tmp)
 
-# --- session: username persistence ---
+# --- session: room username persistence ---
 
 tmp = tempfile.mkdtemp()
 try:
     result, err = run_node(f"""
-import {{ loadBridgeState, loadUsername, persistUsername }} from './dist/session.js';
+import {{ loadBridgeState, getOrCreateSession, setRoomUsername, listRoomSessions }} from './dist/session.js';
 loadBridgeState({json.dumps(tmp)});
 
-// initially no username
-const before = loadUsername();
+// mock client that returns a session ID
+const mockClient = {{ session: {{ create: async () => ({{ data: {{ id: 'sess-1' }} }}) }} }};
+await getOrCreateSession(mockClient, '!room1:test', 'test room', {json.dumps(tmp)});
 
-// persist a username
-persistUsername('mybot', {json.dumps(tmp)});
-const after = loadUsername();
+// set username for the room
+setRoomUsername('!room1:test', 'alice', {json.dumps(tmp)});
+const rooms1 = listRoomSessions();
+const after = rooms1.find(r => r.roomId === '!room1:test')?.username;
 
-// persist same username again (should be a no-op)
-persistUsername('mybot', {json.dumps(tmp)});
-const afterSame = loadUsername();
+// same username is idempotent (no error)
+setRoomUsername('!room1:test', 'alice', {json.dumps(tmp)});
 
-// persist different username
-persistUsername('otherbot', {json.dumps(tmp)});
-const afterDiff = loadUsername();
+// update to different username
+setRoomUsername('!room1:test', 'bob', {json.dumps(tmp)});
+const rooms2 = listRoomSessions();
+const afterUpdate = rooms2.find(r => r.roomId === '!room1:test')?.username;
 
-console.log(JSON.stringify({{ before, after, afterSame, afterDiff }}));
+console.log(JSON.stringify({{ after, afterUpdate }}));
 """)
     if err:
-        check("username persistence (build required)", False, err.strip())
+        check("room username persistence (build required)", False, err.strip())
     else:
-        check("loadUsername: initially null", result["before"] is None)
-        check("persistUsername: stores username", result["after"] == "mybot")
-        check("persistUsername: idempotent", result["afterSame"] == "mybot")
-        check("persistUsername: updates on change", result["afterDiff"] == "otherbot")
+        check("setRoomUsername: stores username", result["after"] == "alice")
+        check("setRoomUsername: updates on change", result["afterUpdate"] == "bob")
 
-    # verify state file on disk has username
+    # verify state file on disk has username in room entry
     state_file = os.path.join(tmp, "state", "bridge.json")
     if os.path.exists(state_file):
         with open(state_file) as f:
             state = json.load(f)
-        check("state file: has username field",
-              state.get("username") == "otherbot",
-              f"got: {state.get('username')}")
+        room = next((r for r in state.get("rooms", []) if r["roomId"] == "!room1:test"), None)
+        check("state file: room has username field",
+              room is not None and room.get("username") == "bob",
+              f"got: {room}")
     else:
         check("state file: exists", False, "state/bridge.json not found")
 finally:
     shutil.rmtree(tmp)
 
-# --- session: username loaded from state on startup ---
+# --- session: room username loaded from state on startup ---
 
 tmp = tempfile.mkdtemp()
 try:
     os.makedirs(os.path.join(tmp, "state"))
     state = {
-        "rooms": [],
+        "rooms": [{"roomId": "!saved:test", "sessionId": "sess-saved", "title": "test", "lastActivity": 1000, "username": "charlie"}],
         "sync_token": None,
         "model": None,
-        "username": "savedbot",
+        "username": None,
     }
     with open(os.path.join(tmp, "state", "bridge.json"), "w") as f:
         json.dump(state, f)
 
     result, err = run_node(f"""
-import {{ loadBridgeState, loadUsername }} from './dist/session.js';
+import {{ loadBridgeState, listRoomSessions }} from './dist/session.js';
 loadBridgeState({json.dumps(tmp)});
-const username = loadUsername();
-console.log(JSON.stringify({{ username }}));
+const rooms = listRoomSessions();
+const room = rooms.find(r => r.roomId === '!saved:test');
+console.log(JSON.stringify({{ username: room?.username }}));
 """)
     if err:
-        check("username from state on startup (build required)", False, err.strip())
+        check("room username from state on startup (build required)", False, err.strip())
     else:
-        check("loadUsername: loads from persisted state",
-              result["username"] == "savedbot",
+        check("room username: loads from persisted state",
+              result["username"] == "charlie",
               f"got: {result['username']}")
 finally:
     shutil.rmtree(tmp)

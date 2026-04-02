@@ -58,6 +58,7 @@ export interface RoomSession {
   sessionId: string
   title: string
   lastActivity: number
+  username?: string
   cleanupBaseline?: { tokens: number; messages: number }
 }
 

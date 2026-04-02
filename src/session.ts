@@ -147,6 +147,14 @@ export async function getOrCreateSession(
   return sessionId
 }
 
+// store the sender's localpart for a room
+export function setRoomUsername(roomId: string, username: string, workspace: string) {
+  const entry = roomSessions.get(roomId)
+  if (!entry || entry.username === username) return
+  entry.username = username
+  persistState(workspace)
+}
+
 // look up which room a session is mapped to (for chat.message hook)
 export function getRoomForSession(sessionId: string): string | null {
   return sessionToRoom.get(sessionId) || null

@@ -7,7 +7,7 @@ import {
 } from './matrix.js'
 import {
   loadBridgeState, getSyncToken, setSyncToken,
-  getOrCreateSession, getRoomForSession, listRoomSessions,
+  getOrCreateSession, getRoomForSession, listRoomSessions, setRoomUsername,
   isBridgedSession, promptSession, shouldCleanup, performCleanup,
   enqueueForRoom, clearRoomMapping, loadModel, persistModel, persistUsername,
   resetRetryNotified, startEventSubscription,
@@ -124,6 +124,7 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
         debug(`new session: ${sessionId}`)
       }
 
+      setRoomUsername(roomId, localpart, WORKSPACE)
       debug(`prompting session ${sessionId}`)
       const parts = await promptSession(client, sessionId, text, CONFIG, lastModel)
       debug(`got ${parts.length} response part(s)`)
