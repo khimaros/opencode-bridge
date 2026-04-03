@@ -77,9 +77,14 @@ export class MatrixClient {
     return roomIds
   }
 
+  // sending a message may clear typing state on the server,
+  // so auto-resume typing for rooms that are still active.
   async sendMessage(roomId: string, content: any) {
     const txnId = `bridge_${Date.now()}_${Math.random().toString(36).slice(2)}`
     await this.api('PUT', `/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${txnId}`, content)
+    if (this.typingRooms.has(roomId)) {
+      this.setTyping(roomId, true).catch(() => {})
+    }
   }
 
   async sendText(roomId: string, text: string) {
@@ -91,6 +96,8 @@ export class MatrixClient {
   }
 
   async setTyping(roomId: string, typing: boolean) {
+    if (typing) this.typingRooms.add(roomId)
+    else this.typingRooms.delete(roomId)
     const body = typing ? { typing: true, timeout: 30000 } : { typing: false }
     await this.api('PUT',
       `/rooms/${encodeURIComponent(roomId)}/typing/${encodeURIComponent(this.getUserId())}`,
@@ -157,6 +164,9 @@ export class MatrixClient {
     const data = await this.api('GET', '/account/whoami')
     return data.user_id
   }
+
+  // rooms where typing is active — sendMessage auto-resumes typing for these
+  private typingRooms = new Set<string>()
 
   // exposed for typing endpoint which needs the user ID
   private userId = ''

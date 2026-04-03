@@ -25,7 +25,8 @@ const sessionToRoom = new Map<string, string>()
 // per-room promise chain to serialize concurrent messages
 const roomQueues = new Map<string, Promise<void>>()
 
-// per-room flag: true once a retry notice has been sent for the current prompt
+// per-room flag: true once a retry notice has been sent for the current prompt.
+// only used when retry_notify_once is enabled.
 const retryNotified = new Map<string, boolean>()
 
 // pending permission requests awaiting matrix user reply.
@@ -309,13 +310,16 @@ export async function performCleanup(
   return { newSessionId: newId, action: config.cleanup }
 }
 
-// mark a room as eligible for retry notifications (call at prompt start)
+
+// reset retry notification state for a room (call at prompt start)
 export function resetRetryNotified(roomId: string) {
   retryNotified.set(roomId, false)
 }
 
-// mark a room as having been notified about a retry (returns true if this is the first call)
-export function markRetryNotified(roomId: string): boolean {
+// guard retry notifications when retry_notify_once is enabled.
+// returns true if the notification should be sent.
+export function shouldNotifyRetry(roomId: string, once: boolean): boolean {
+  if (!once) return true
   if (retryNotified.get(roomId)) return false
   retryNotified.set(roomId, true)
   return true
@@ -363,6 +367,7 @@ export async function replyPermission(
 // for bridged sessions to the provided callbacks.
 export async function startEventSubscription(
   client: any,
+  config: BridgeConfig,
   onRetry: (roomId: string, message: string) => void,
   onCompacted: (roomId: string) => void,
   onPermission?: (roomId: string, permission: { id: string; sessionID: string; permission: string; patterns: string[] }) => void,
@@ -381,7 +386,7 @@ export async function startEventSubscription(
           const e = event as any
           if (e.type === 'session.status' && e.properties?.status?.type === 'retry') {
             const roomId = getRoomForSession(e.properties.sessionID)
-            if (roomId && markRetryNotified(roomId)) {
+            if (roomId && shouldNotifyRetry(roomId, config.retry_notify_once)) {
               onRetry(roomId, e.properties.status.message)
             }
           } else if (e.type === 'session.compacted') {

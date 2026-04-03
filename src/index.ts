@@ -187,6 +187,7 @@ export const BridgePlugin: Plugin = async ({ serverUrl }) => {
   // subscribe to opencode SSE events for retry/compaction/permission notifications
   startEventSubscription(
     client,
+    CONFIG,
     (roomId, message) => {
       debug(`retry notice for room ${roomId}: ${message}`)
       matrixClient.sendNotice(roomId, `[retrying: ${message}]`).catch(() => {})

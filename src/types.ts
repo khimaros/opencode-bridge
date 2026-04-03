@@ -16,6 +16,7 @@ export interface BridgeConfig {
   cleanup: 'none' | 'compact' | 'new' | 'archive'
   cleanup_tokens: number | null
   cleanup_message_count: number | null
+  retry_notify_once: boolean
   model: { providerID: string; modelID: string } | null
   system_prompt: string
 }
@@ -40,6 +41,7 @@ export const DEFAULTS: BridgeConfig = {
   cleanup: 'none',
   cleanup_tokens: null,
   cleanup_message_count: null,
+  retry_notify_once: false,
   model: null,
   system_prompt: [
     'messages from different users are prefixed with [username].',

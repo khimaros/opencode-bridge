@@ -4,6 +4,8 @@
 
 ## done
 
+- [x] auto-resume typing indicator after any message send during active session
+- [x] send retry notifications on every retry (configurable via retry_notify_once)
 - [x] store bot username (localpart) in bridge state JSON
 - [x] send each assistant text part as a separate matrix message (not just the last)
 - [x] permission request forwarding to matrix with per-user allowlist
