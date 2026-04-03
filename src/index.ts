@@ -1,6 +1,6 @@
 import type { Plugin } from '@opencode-ai/plugin'
 import { tool } from '@opencode-ai/plugin'
-import { createOpencodeClient } from '@opencode-ai/sdk'
+import { createOpencodeClient } from '@opencode-ai/sdk/client'
 import { loadConfig, validateConfig, WORKSPACE } from './config.js'
 import {
   MatrixClient, getRoomMembers, getBotDisplayName, getTriggerMode, isRoomAllowed,
