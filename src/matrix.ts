@@ -1,5 +1,5 @@
-import type { BridgeConfig } from './types.js'
-import { LOG_PREFIX } from './types.js'
+import type { BridgeConfig } from './types'
+import { LOG_PREFIX } from './types'
 
 function debug(msg: string) {
   console.log(`${LOG_PREFIX}: ${msg}`)

@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
-import type { BridgeConfig, RoomSession, Part } from './types.js'
-import { LOG_PREFIX } from './types.js'
+import type { BridgeConfig, RoomSession, Part } from './types'
+import { LOG_PREFIX } from './types'
 
 function debug(msg: string) {
   console.log(`${LOG_PREFIX}: ${msg}`)

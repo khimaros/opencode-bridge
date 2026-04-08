@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { homedir } from 'node:os'
-import type { BridgeConfig } from './types.js'
-import { DEFAULTS, LOG_PREFIX } from './types.js'
+import type { BridgeConfig } from './types'
+import { DEFAULTS, LOG_PREFIX } from './types'
 
 export const WORKSPACE = process.env.OPENCODE_BRIDGE_WORKSPACE
   || process.env.OPENCODE_SIDECAR_WORKSPACE

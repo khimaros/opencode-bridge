@@ -1,5 +1,5 @@
-import type { BridgeConfig, Part } from './types.js'
-import { NO_RESPONSE_MARKER } from './types.js'
+import type { BridgeConfig, Part } from './types'
+import { NO_RESPONSE_MARKER } from './types'
 
 // format an incoming matrix message for the opencode session.
 // always includes sender attribution so the LLM knows who's talking.

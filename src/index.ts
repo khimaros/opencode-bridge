@@ -1,10 +1,10 @@
 import type { Plugin } from '@opencode-ai/plugin'
 import { tool } from '@opencode-ai/plugin'
 import { createOpencodeClient } from '@opencode-ai/sdk/client'
-import { loadConfig, validateConfig, WORKSPACE } from './config.js'
+import { loadConfig, validateConfig, WORKSPACE } from './config'
 import {
   MatrixClient, getRoomMembers, getBotDisplayName, getTriggerMode, isRoomAllowed,
-} from './matrix.js'
+} from './matrix'
 import {
   loadBridgeState, getSyncToken, setSyncToken,
   getOrCreateSession, getRoomForSession, listRoomSessions, setRoomUsername,
@@ -13,13 +13,13 @@ import {
   resetRetryNotified, startEventSubscription,
   awaitPermissionReply, resolvePendingPermission, hasPendingPermission,
   replyPermission,
-} from './session.js'
+} from './session'
 import {
   formatIncomingMessage, formatOutgoingParts, formatSystemPromptAddendum,
   formatCompactionContext, isBotMentioned, stripBotMention,
   parsePermissionReply,
-} from './format.js'
-import { LOG_PREFIX } from './types.js'
+} from './format'
+import { LOG_PREFIX } from './types'
 
 function debug(msg: string) {
   console.log(`${LOG_PREFIX}: ${msg}`)
